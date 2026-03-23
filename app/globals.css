@@ -24,3 +24,27 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.row-flash {
+  animation: row-highlight 2s ease-out;
+}
+
+@keyframes row-highlight {
+  0% {
+    background-color: rgba(16, 185, 129, 0.18);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  @keyframes row-highlight {
+    0% {
+      background-color: rgba(16, 185, 129, 0.15);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+}
