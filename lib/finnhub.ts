@@ -2,7 +2,11 @@ import { cacheLife } from "next/cache";
 import type {
   FinnhubQuote,
   FinnhubProfile,
+  FinnhubMetrics,
+  FinnhubNewsItem,
+  FinnhubRecommendation,
   Stock,
+  StockDetail,
   MarketStatus,
   MarketHoliday,
   MarketHolidayResponse,
@@ -20,21 +24,54 @@ function getApiKey(): string {
 // Profile — cached with 'use cache' (company name, market cap rarely change)
 // ---------------------------------------------------------------------------
 
+const PROFILE_TTL_MS = 24 * 60 * 60_000;
+
+interface CachedProfile {
+  data: FinnhubProfile;
+  ts: number;
+}
+
+const profileCache = new Map<string, CachedProfile>();
+const inflightProfileRequests = new Map<string, Promise<FinnhubProfile>>();
+
 export async function fetchCachedProfile(
   symbol: string
 ): Promise<FinnhubProfile> {
-  "use cache";
-  cacheLife("days");
-
-  const res = await fetch(
-    `${FINNHUB_BASE}/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${getApiKey()}`
-  );
-  if (!res.ok) {
-    throw new Error(
-      `Finnhub profile request failed for ${symbol}: ${res.status}`
-    );
+  const normalizedSymbol = symbol.toUpperCase();
+  const cached = profileCache.get(normalizedSymbol);
+  if (cached && Date.now() - cached.ts < PROFILE_TTL_MS) {
+    return cached.data;
   }
-  return res.json();
+
+  const inflight = inflightProfileRequests.get(normalizedSymbol);
+  if (inflight) {
+    return inflight;
+  }
+
+  const request = (async () => {
+    "use cache";
+    cacheLife("days");
+
+    const res = await fetch(
+      `${FINNHUB_BASE}/stock/profile2?symbol=${encodeURIComponent(normalizedSymbol)}&token=${getApiKey()}`
+    );
+    if (!res.ok) {
+      throw new Error(
+        `Finnhub profile request failed for ${normalizedSymbol}: ${res.status}`
+      );
+    }
+
+    const data: FinnhubProfile = await res.json();
+    profileCache.set(normalizedSymbol, { data, ts: Date.now() });
+    return data;
+  })();
+
+  inflightProfileRequests.set(normalizedSymbol, request);
+  try {
+    return await request;
+  } finally {
+    inflightProfileRequests.delete(normalizedSymbol);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -105,15 +142,21 @@ export async function fetchStock(symbol: string): Promise<Stock | null> {
 export async function fetchAllStocks(
   symbols: readonly string[]
 ): Promise<Stock[]> {
-  const results = await Promise.allSettled(symbols.map((s) => fetchStock(s)));
+  const CONCURRENCY = 6;
+  const stocks: Stock[] = [];
 
-  return results
-    .filter(
-      (r): r is PromiseFulfilledResult<Stock | null> =>
-        r.status === "fulfilled"
-    )
-    .map((r) => r.value)
-    .filter((s): s is Stock => s !== null);
+  for (let index = 0; index < symbols.length; index += CONCURRENCY) {
+    const batch = symbols.slice(index, index + CONCURRENCY);
+    const batchResults = await Promise.allSettled(batch.map((s) => fetchStock(s)));
+
+    for (const result of batchResults) {
+      if (result.status === "fulfilled" && result.value) {
+        stocks.push(result.value);
+      }
+    }
+  }
+
+  return stocks;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,4 +205,125 @@ export async function fetchMarketHolidays(
 
   const body: MarketHolidayResponse = await res.json();
   return body.data;
+}
+
+// ---------------------------------------------------------------------------
+// Basic Financials — cached hours (ratios change at most daily after close)
+// ---------------------------------------------------------------------------
+
+export async function fetchBasicFinancials(
+  symbol: string
+): Promise<FinnhubMetrics> {
+  "use cache";
+  cacheLife("hours");
+
+  const res = await fetch(
+    `${FINNHUB_BASE}/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all&token=${getApiKey()}`
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Finnhub metric request failed for ${symbol}: ${res.status}`
+    );
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Company News — 30-min in-memory cache
+// ---------------------------------------------------------------------------
+
+const NEWS_TTL_MS = 30 * 60_000;
+
+interface CachedNews {
+  data: FinnhubNewsItem[];
+  ts: number;
+}
+
+const newsCache = new Map<string, CachedNews>();
+
+export async function fetchCompanyNews(
+  symbol: string,
+  from: string,
+  to: string
+): Promise<FinnhubNewsItem[]> {
+  const key = `${symbol}:${from}:${to}`;
+  const cached = newsCache.get(key);
+  if (cached && Date.now() - cached.ts < NEWS_TTL_MS) {
+    return cached.data;
+  }
+
+  const res = await fetch(
+    `${FINNHUB_BASE}/company-news?symbol=${encodeURIComponent(symbol)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&token=${getApiKey()}`
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Finnhub company-news request failed for ${symbol}: ${res.status}`
+    );
+  }
+
+  const data: FinnhubNewsItem[] = await res.json();
+  newsCache.set(key, { data, ts: Date.now() });
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Recommendation Trends — cached hours (updated monthly by analysts)
+// ---------------------------------------------------------------------------
+
+export async function fetchRecommendationTrends(
+  symbol: string
+): Promise<FinnhubRecommendation[]> {
+  "use cache";
+  cacheLife("hours");
+
+  const res = await fetch(
+    `${FINNHUB_BASE}/stock/recommendation?symbol=${encodeURIComponent(symbol)}&token=${getApiKey()}`
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Finnhub recommendation request failed for ${symbol}: ${res.status}`
+    );
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Stock Detail — assembles extended stock data for the detail page
+// ---------------------------------------------------------------------------
+
+export async function fetchStockDetail(
+  symbol: string
+): Promise<StockDetail | null> {
+  try {
+    const [quote, profile] = await Promise.all([
+      fetchQuote(symbol),
+      fetchCachedProfile(symbol),
+    ]);
+
+    if (!quote.c || !profile.name) return null;
+
+    return {
+      symbol,
+      name: profile.name,
+      industry: profile.finnhubIndustry,
+      price: quote.c,
+      previousClose: quote.pc,
+      change: quote.d,
+      percentChange: quote.dp,
+      highToday: quote.h,
+      lowToday: quote.l,
+      openPrice: quote.o,
+      marketCap: profile.marketCapitalization,
+      exchange: profile.exchange,
+      currency: profile.currency,
+      logo: profile.logo,
+      ipo: profile.ipo,
+      weburl: profile.weburl,
+      country: profile.country,
+      shareOutstanding: profile.shareOutstanding,
+    };
+  } catch (error) {
+    console.error(`Failed to fetch stock detail for ${symbol}:`, error);
+    return null;
+  }
 }

@@ -28,11 +28,11 @@ Create a `.env.local` in the project root (never commit secrets). Example:
 | Variable | Required | Where it runs | Description |
 |----------|----------|----------------|-------------|
 | `FINNHUB_API_KEY` | Yes | Server only | REST API calls to Finnhub from route handlers |
-| `NEXT_PUBLIC_FINNHUB_API_KEY` | Yes | Client (browser) | WebSocket connection token (see trade-off note in [DECISIONS.md](./DECISIONS.md)) |
+| `NEXT_PUBLIC_FINNHUB_API_KEY` | Yes | Client (browser) | WebSocket token for main screener live prices |
 | `OPENAI_API_KEY` | If using OpenAI | Server only | LLM for streaming stock insights (later phase) |
 | `ANTHROPIC_API_KEY` | If using Anthropic | Server only | Alternative LLM for insights (later phase) |
 
-`NEXT_PUBLIC_FINNHUB_API_KEY` is exposed to the browser for the WebSocket connection. Finnhub free-tier keys are commonly treated as non-secret for client WS in demos; document the trade-off for production.
+`NEXT_PUBLIC_FINNHUB_API_KEY` is exposed to the browser for the main screener WebSocket. Finnhub free-tier keys are commonly treated as non-secret for client WS in demos; document the trade-off for production.
 
 ## Setup and scripts
 
@@ -55,10 +55,10 @@ Aligned with the technical brief:
 - [x] React Compiler enabled in `next.config.ts`
 - [x] Request interception + **30 req/min per IP** rate limit in **`proxy.ts`** (not `middleware.ts`)
 - [x] Typed Finnhub **proxy** API: normalized fields, Zod on query params, computed fields where useful
-- [x] **25** symbols: ticker, name, price, % change, market cap; **WebSocket** live updates + manual refresh fallback
+- [x] **25** tracked symbols: ticker, name, price, % change, market cap; **WebSocket** live updates + manual refresh fallback
 - [x] Suspense + skeleton UI for data-loading routes
 - [x] **≥3** URL-driven, debounced filters with analyst-relevant metrics
-- [ ] Stock **detail** with shareable URL; rendering strategy documented
+- [x] Stock **detail** with shareable URL (`/stock/[symbol]`); rendering strategy documented in [DECISIONS.md](./DECISIONS.md)
 - [ ] **`/api/insight`**: streaming tokens (`ReadableStream`), cached insights, graceful failure
 - [ ] Explicit **`'use cache'`** only where caching is intentional (no implicit caching assumptions)
 
@@ -83,7 +83,7 @@ Check items off as you implement. Log decisions in [DECISIONS_LOG.md](./DECISION
 
 - **Finnhub free tier:** rate limits apply; batching, caching, and conservative client behavior are required (see [DECISIONS.md](./DECISIONS.md)).
 - **In-memory rate limiting** in `proxy.ts` does not coordinate across multiple server instances or survive restarts; not suitable as-is for horizontal scale without a shared store.
-- **WebSocket** behavior depends on network and browser tab lifecycle; reconnection logic should handle drops without taking down the UI.
+- **WebSocket** behavior (main screener only) depends on network and browser tab lifecycle; reconnection logic should handle drops without taking down the UI.
 
 ## Related documentation
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef } from "react";
+import Link from "next/link";
 import { useFinnhubWebSocket } from "@/hooks/useFinnhubWebSocket";
 import { useStockFilters } from "@/hooks/useStockFilters";
 import { ConnectionStatusBadge } from "@/components/ConnectionStatus";
@@ -174,10 +175,17 @@ export function StockTable({ initialStocks }: StockTableProps) {
                   className={`border-b border-zinc-100 transition-colors hover:bg-zinc-50 dark:border-zinc-800/50 dark:hover:bg-zinc-800/40 ${isFlashing ? "row-flash" : ""}`}
                 >
                   <td className="px-4 py-3 font-semibold text-zinc-900 dark:text-zinc-100">
-                    {stock.symbol}
+                    <Link
+                      href={`/stock/${stock.symbol}`}
+                      className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                    >
+                      {stock.symbol}
+                    </Link>
                   </td>
                   <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                    {stock.name}
+                    <Link href={`/stock/${stock.symbol}`} className="hover:underline">
+                      {stock.name}
+                    </Link>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
                     {formatPrice(stock.price)}

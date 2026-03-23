@@ -31,6 +31,8 @@ export function useFinnhubWebSocket({
   const flushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   );
+  const isMountedRef = useRef(false);
+  const shouldReconnectRef = useRef(true);
 
 
   const symbolsRef = useRef(symbols);
@@ -47,6 +49,9 @@ export function useFinnhubWebSocket({
   }, []);
 
   const connect = useCallback(() => {
+    if (!enabled || !isMountedRef.current || !shouldReconnectRef.current) return;
+    if (wsRef.current) return;
+
     const apiKey = process.env.NEXT_PUBLIC_FINNHUB_API_KEY;
     if (!apiKey) {
       console.warn(
@@ -56,14 +61,13 @@ export function useFinnhubWebSocket({
       setStatus("disconnected");
       return;
     }
-    if (!enabled) return;
-
     setStatus("connecting");
 
     const ws = new WebSocket(`${WS_URL}?token=${apiKey}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       setStatus("connected");
       reconnectAttempts.current = 0;
 
@@ -73,6 +77,7 @@ export function useFinnhubWebSocket({
     };
 
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       try {
         const data = JSON.parse(event.data);
         if (data.type === "trade" && Array.isArray(data.data)) {
@@ -93,14 +98,23 @@ export function useFinnhubWebSocket({
     };
 
     ws.onclose = () => {
-      wsRef.current = null;
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
       if (flushTimer.current) {
         clearTimeout(flushTimer.current);
         flushTimer.current = undefined;
       }
       flushUpdates();
 
-      if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS && enabled) {
+      const canReconnect =
+        wsRef.current === null &&
+        enabled &&
+        isMountedRef.current &&
+        shouldReconnectRef.current &&
+        reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS;
+
+      if (canReconnect) {
         setStatus("reconnecting");
         const delay = Math.min(
           RECONNECT_BASE_DELAY * 2 ** reconnectAttempts.current,
@@ -121,6 +135,8 @@ export function useFinnhubWebSocket({
   const ensureConnected = useCallback(() => {
     if (
       enabled &&
+      isMountedRef.current &&
+      shouldReconnectRef.current &&
       !wsRef.current &&
       !reconnectTimer.current
     ) {
@@ -130,16 +146,25 @@ export function useFinnhubWebSocket({
   }, [enabled, connect]);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    shouldReconnectRef.current = true;
+
     if (enabled) {
       connect();
+    } else {
+      setStatus("disconnected");
     }
 
     return () => {
+      shouldReconnectRef.current = false;
+      isMountedRef.current = false;
+
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       if (flushTimer.current) clearTimeout(flushTimer.current);
       if (wsRef.current) {
-        wsRef.current.close();
+        const current = wsRef.current;
         wsRef.current = null;
+        current.close();
       }
     };
   }, [connect, enabled]);

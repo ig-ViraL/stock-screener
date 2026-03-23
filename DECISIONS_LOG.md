@@ -84,6 +84,34 @@ Copy the template below to the **bottom** of this file (newest last). Use ISO da
 - **Alternatives considered:** Price range filter (rejected — "arbitrary number range" per assignment guidance; not analytically meaningful without position context); P/E ratio (rejected — requires additional Finnhub API calls to basic financials endpoint, adding latency and rate-limit pressure for 25 more calls); volume filter (rejected — not in current `Stock` data without additional API calls or aggregating WebSocket tick volumes).
 - **Follow-up:** Update DECISIONS.md section 4 with final implementation; check README feature checklist.
 
+### 2026-03-23 — Stock detail view (`/stock/[symbol]`)
+
+- **Context:** Assignment requires a stock detail view with a shareable URL, expanded information, and a documented rendering strategy independent of the main listing.
+- **Decision:** Dedicated page at `/stock/[symbol]` (not modal/panel). Dynamic Server Component page with `'use cache'` on slow-changing fragments and Suspense boundaries per section.
+- **Why a page:** High-density analytical content (6 sections) needs scroll space, deep focus, and a shareable URL. Panels feel constrained for this amount of data. Pages support browser back/forward navigation naturally.
+- **Rendering strategy:** Dynamic page — stock prices change continuously, so static prerendering would be stale. Specific data fragments are cached:
+  - **Profile** (`'use cache'` + `cacheLife('days')`) — name, HQ, IPO rarely change.
+  - **Metrics** (`'use cache'` + `cacheLife('hours')`) — P/E, beta change daily at most.
+  - **Recommendations** (`'use cache'` + `cacheLife('hours')`) — updated monthly.
+  - **News** (30-min in-memory TTL) — changes throughout the day.
+  - **Quote** (30s in-memory TTL, existing) — real-time via WebSocket after initial load.
+- **Finnhub endpoints added:**
+  - `/stock/metric?metric=all` — P/E, EPS, 52-wk range, beta, dividend yield, ROE, debt/equity.
+  - `/company-news` — recent headlines (free tier, 7-day window).
+  - `/stock/recommendation` — analyst buy/hold/sell consensus.
+  - `/stock/candle` — OHLCV candles for charting (requires paid plan; graceful fallback on free tier).
+- **Chart library:** `lightweight-charts` by TradingView (~45KB). Dynamically imported with `ssr: false` so it only loads on the detail page. Chosen over recharts/chart.js for purpose-built financial chart support.
+- **Information architecture (6 sections):**
+  1. **Header** — price, change, logo, day range bar, 52-week range bar (client, WS updates).
+  2. **Price chart** — line chart with time range buttons 1D/1W/1M/3M/1Y, volume overlay (client).
+  3. **Key metrics** — grouped by Valuation/Profitability/Risk/Dividends (server).
+  4. **Company profile** — exchange, IPO date, country, website (server, cached).
+  5. **Analyst recommendations** — stacked bar of strongBuy/buy/hold/sell/strongSell (server).
+  6. **Recent news** — 8 headlines with source, timestamp, thumbnails (server).
+- **Suspense:** Each section has its own `<Suspense>` boundary so all data fetches start in parallel (no waterfalls) and sections stream in independently.
+- **Next.js 16:** `params` is a `Promise` — `await` in page and `generateMetadata`. Symbol validated against `STOCK_SYMBOLS`; unknown symbols trigger `notFound()`.
+- **Alternatives considered:** Modal/panel (rejected — too constrained for analyst content); static generation with `generateStaticParams` (rejected — prices are live); single API route for all detail data (rejected — Suspense boundaries need independent fetches for streaming).
+
 ### 2026-03-23 — Market status & holiday indicators
 
 - **Context:** Finnhub offers two free-tier endpoints — `/stock/market-status` (exchange session state: pre-market, regular, post-market, closed) and `/stock/market-holiday` (full calendar of upcoming exchange holidays including early-close days). Displaying this in the dashboard gives analysts immediate context about when the exchange is active.
@@ -97,4 +125,18 @@ Copy the template below to the **bottom** of this file (newest last). Use ISO da
 - **API cost:** 2 additional Finnhub calls on cold start (status + holidays), then holidays are cached for days and status is cached for 30s. Well within the 60/min rate limit.
 - **Why a popover (not inline):** The information is contextual — analysts glance at the badge to confirm the market is open, then drill into the popover for details. Keeps the header clean while still surfacing holiday awareness (early closes catch people off guard).
 - **Alternatives considered:** Toast/banner on market close (dismissed by users, not persistent); separate `/market` route (over-engineering for informational data); WebSocket-based status updates (no Finnhub WS endpoint for this).
+
+### 2026-03-23 — Remove detail chart and detail-page WebSocket
+
+- **Context:** Finnhub free-tier access does not provide reliable candle data for detail charting, and the detail page was opening a dedicated WebSocket only for header live ticks.
+- **Decision:** Removed detail chart implementation and candles API route (`PriceChart` component + `/api/stock/[symbol]/candles`). Detail header now renders server-fetched snapshot data only (no detail-page WebSocket hook).
+- **Why:** Keep detail experience stable on free tier, reduce unnecessary client reconnect behavior, and remove dead chart dependency (`lightweight-charts`).
+- **Alternatives considered:** Keep chart with fallback empty state (rejected — still ships unused code and unavailable UX); poll quote endpoint on detail page (rejected — unnecessary API pressure for assignment scope).
+
+### 2026-03-23 — Source dashboard symbols from Finnhub API
+
+- **Context:** Dashboard was backed by a hardcoded `STOCK_SYMBOLS` list, while Finnhub exposes `/stock/symbol?exchange=US` for supported symbols.
+- **Decision:** Replaced fixed list with `fetchUSStockSymbols()` + `fetchDashboardSymbols(limit)` in `lib/finnhub.ts`, cached daily (`'use cache'` + in-memory TTL). Home and `/api/stocks` now default to the first 25 API-backed symbols; `/api/stocks` also supports `limit` (1..50) and optional explicit `symbols`.
+- **Why:** Keeps symbol universe API-driven, avoids hardcoded maintenance, and stays within free-tier constraints by preserving a bounded default set.
+- **Alternatives considered:** Load all US symbols into dashboard (rejected — too many per-request quote/profile calls for free-tier rate limits); keep static list (rejected — stale and manual).
 

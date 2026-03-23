@@ -76,11 +76,41 @@ Next.js 16 deprecates **`middleware.ts`** for the kind of network interception w
 
 ## 5. Stock detail view
 
-**Interaction:** Clicking a row opens a **detail** experience (dedicated **route** recommended for clarity).
+**Route:** `/stock/[symbol]` — a dedicated page (not a modal or panel).
 
-**Shareable URL:** e.g. `/stock/[symbol]` (exact path to match implementation) so analysts can link directly.
+**Why a page:** The detail view contains high-density analyst context (header, metrics, profile, analyst recommendations, news) — too much for a panel. A page supports:
+- Shareable URLs: `/stock/AAPL` can be sent directly to colleagues.
+- Deep focus: analysts examining a stock need an uncluttered workspace.
+- Independent rendering strategy from the screener listing.
+- Browser back/forward navigation.
 
-**Rendering vs list:** Detail can pull **more** profile and context fields than the table. **Profile-like** segments may use **`'use cache'`** where data is slow-changing; **price and intraday** fields stay tied to live client state or fresh fetches so the detail view does not contradict the WebSocket feed.
+**Rendering strategy:** Dynamic Server Component page — **independent from the main listing** (which is also dynamic but for different reasons). Each section is wrapped in its own `<Suspense>` boundary; all data fetches start in parallel with no waterfalls.
+
+| Data | Strategy | Rationale |
+|------|----------|-----------|
+| Quote (price, change) | Dynamic (30s TTL snapshot) | Detail page uses server-fetched context; live ticks are reserved for screener table |
+| Company profile | `'use cache'` + `cacheLife('days')` | Name, HQ, IPO date change almost never |
+| Basic financials (metrics) | `'use cache'` + `cacheLife('hours')` | P/E, EPS, beta change daily at most |
+| Analyst recommendations | `'use cache'` + `cacheLife('hours')` | Updated monthly by analysts |
+| Company news | 30-min in-memory TTL | Changes throughout the day |
+
+**Why not `generateStaticParams`?** Stock data is live. Pre-rendering 25 pages would show stale prices. The page is dynamic; only specific data fragments are cached per the table above.
+
+**Information architecture — what an analyst sees:**
+
+1. **Header (Decision Snapshot):** Logo, ticker, price with $ and % change, exchange, market cap, day range bar, 52-week range bar.
+2. **Key Metrics:** Grouped by Valuation (P/E, P/B, EPS), Profitability (ROE, Net Margin, Revenue/Share), Risk (Beta, Debt/Equity), Dividends (Yield).
+3. **Company Profile:** Exchange, currency, country, IPO date, website.
+4. **Analyst Recommendations:** Horizontal stacked bar of strongBuy/buy/hold/sell/strongSell with color coding.
+5. **Recent News:** Latest 8 headlines with source, relative timestamp, thumbnails, external links.
+
+| File | Role |
+|------|------|
+| [`app/stock/[symbol]/page.tsx`](./app/stock/[symbol]/page.tsx) | Server Component orchestrator with parallel Suspense |
+| [`app/stock/[symbol]/loading.tsx`](./app/stock/[symbol]/loading.tsx) | Full-page skeleton |
+| [`app/stock/[symbol]/error.tsx`](./app/stock/[symbol]/error.tsx) | Error boundary with retry |
+| [`app/stock/[symbol]/not-found.tsx`](./app/stock/[symbol]/not-found.tsx) | Unknown symbol 404 |
+| [`components/stock-detail/`](./components/stock-detail/) | Header, metrics, profile, recommendations, news |
 
 ---
 
@@ -150,10 +180,24 @@ Examples of defensible **non-goals** for a 4–5 hour slice:
 | API route | [`app/api/stocks/route.ts`](./app/api/stocks/route.ts) — Zod-validated, normalized Finnhub REST proxy | Done |
 | Rate limiting | [`proxy.ts`](./proxy.ts) — 30 req/min/IP, in-memory map, matcher `/api/:path*` | Done |
 | React Compiler | [`next.config.ts`](./next.config.ts) — `reactCompiler: true` | Done |
-| Shared lib | [`lib/types.ts`](./lib/types.ts), [`lib/symbols.ts`](./lib/symbols.ts), [`lib/finnhub.ts`](./lib/finnhub.ts), [`lib/format.ts`](./lib/format.ts) | Done |
+| Shared lib | [`lib/types.ts`](./lib/types.ts), [`lib/finnhub.ts`](./lib/finnhub.ts), [`lib/format.ts`](./lib/format.ts) | Done |
 | Dependencies | Next **16.2.1**, React **19.2.4**, Tailwind **4**, **zod**, **babel-plugin-react-compiler** | Done |
 
 | URL-driven filters | [`lib/filters.ts`](./lib/filters.ts), [`hooks/useStockFilters.ts`](./hooks/useStockFilters.ts), [`components/FilterBar.tsx`](./components/FilterBar.tsx) | Done |
 | Industry in Stock | [`lib/types.ts`](./lib/types.ts), [`lib/finnhub.ts`](./lib/finnhub.ts) — `industry` field added | Done |
 
-**Still to do (later phases):** Stock detail route, `/api/insight` streaming, bundle analyzer.
+**Phase 2 complete**
+
+| Item | Path / version | Status |
+|------|----------------|--------|
+| Stock detail page | [`app/stock/[symbol]/page.tsx`](./app/stock/[symbol]/page.tsx) — dynamic route, `generateMetadata`, Suspense per section | Done |
+| Detail loading/error/404 | [`loading.tsx`](./app/stock/[symbol]/loading.tsx), [`error.tsx`](./app/stock/[symbol]/error.tsx), [`not-found.tsx`](./app/stock/[symbol]/not-found.tsx) | Done |
+| Detail header | [`StockDetailHeader.tsx`](./components/stock-detail/StockDetailHeader.tsx) — price snapshot, day/52wk range bars | Done |
+| Key metrics (server) | [`KeyMetrics.tsx`](./components/stock-detail/KeyMetrics.tsx) — P/E, EPS, beta, ROE, D/E grouped by category | Done |
+| Company profile (server) | [`CompanyProfile.tsx`](./components/stock-detail/CompanyProfile.tsx) — exchange, IPO, country, website | Done |
+| Analyst recommendations (server) | [`AnalystRecommendations.tsx`](./components/stock-detail/AnalystRecommendations.tsx) — stacked bar chart | Done |
+| News section (server) | [`NewsSection.tsx`](./components/stock-detail/NewsSection.tsx) — 8 headlines with thumbnails | Done |
+| Screener row links | [`StockTable.tsx`](./components/StockTable.tsx) — symbol/name link to `/stock/[symbol]` | Done |
+| Finnhub fetchers | [`lib/finnhub.ts`](./lib/finnhub.ts) — `fetchBasicFinancials`, `fetchCompanyNews`, `fetchRecommendationTrends`, `fetchStockDetail` | Done |
+
+**Still to do (later phases):** `/api/insight` streaming, bundle analyzer.

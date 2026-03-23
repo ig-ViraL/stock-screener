@@ -78,3 +78,62 @@ export interface MarketInfo {
   status: MarketStatus;
   holidays: MarketHoliday[];
 }
+
+// ---------------------------------------------------------------------------
+// Stock detail — Finnhub response shapes
+// ---------------------------------------------------------------------------
+
+export interface FinnhubMetrics {
+  metric: {
+    "10DayAverageTradingVolume"?: number;
+    "52WeekHigh"?: number;
+    "52WeekHighDate"?: string;
+    "52WeekLow"?: number;
+    "52WeekLowDate"?: string;
+    beta?: number;
+    dividendYieldIndicatedAnnual?: number;
+    epsBasicExclExtraItemsTTM?: number;
+    epsGrowthTTMYoy?: number;
+    netProfitMarginTTM?: number;
+    peBasicExclExtraTTM?: number;
+    pbAnnual?: number;
+    roeTTM?: number;
+    revenuePerShareTTM?: number;
+    totalDebtToEquityQuarterly?: number;
+    [key: string]: number | string | undefined;
+  };
+  metricType: string;
+  symbol: string;
+}
+
+export interface FinnhubNewsItem {
+  category: string;
+  datetime: number;
+  headline: string;
+  id: number;
+  image: string;
+  related: string;
+  source: string;
+  summary: string;
+  url: string;
+}
+
+export interface FinnhubRecommendation {
+  buy: number;
+  hold: number;
+  period: string;
+  sell: number;
+  strongBuy: number;
+  strongSell: number;
+  symbol: string;
+}
+
+export interface StockDetail extends Stock {
+  exchange: string;
+  currency: string;
+  logo: string;
+  ipo: string;
+  weburl: string;
+  country: string;
+  shareOutstanding: number;
+}
