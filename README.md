@@ -84,6 +84,8 @@ Check items off as you implement. Log decisions in [DECISIONS_LOG.md](./DECISION
 - **Finnhub free tier:** rate limits apply; batching, caching, and conservative client behavior are required (see [DECISIONS.md](./DECISIONS.md)).
 - **In-memory rate limiting** in `proxy.ts` does not coordinate across multiple server instances or survive restarts; not suitable as-is for horizontal scale without a shared store.
 - **WebSocket** behavior (main screener only) depends on network and browser tab lifecycle; reconnection logic should handle drops without taking down the UI.
+- **LLM/AI insight feature testing gap:** no `OPENAI_API_KEY` (or other configured LLM key) was available during local testing, so `/api/insight` streaming behavior could not be fully validated end-to-end. When the key is missing, the endpoint returns `500` with `{ "error": "AI service not configured" }`.
+- **Process-local caches:** in-memory caches (rate limiting and `/api/insight` caching) are per server process and reset on restart; multi-instance deployments require a shared cache (e.g., Redis) to behave consistently.
 
 ## Related documentation
 

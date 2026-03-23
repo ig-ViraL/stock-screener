@@ -1,18 +1,58 @@
 # HTTP API
 
+This document covers all API routes under `app/api`.
+
+## Global middleware: rate limiting (`proxy.ts`)
+
+All `/api/*` routes are protected by an in-memory IP-based rate limiter.
+
+- **Window:** 60 seconds
+- **Limit:** 30 requests per IP per window
+- **Matcher:** `/api/:path*`
+
+### Rate limit headers
+
+On successful requests, middleware adds:
+
+- `X-RateLimit-Limit`: `30`
+- `X-RateLimit-Remaining`: remaining requests in the current window
+
+When throttled, response is:
+
+- **Status:** `429 Too Many Requests`
+- **Body:**
+  ```json
+  {
+    "error": "Too many requests",
+    "retryAfterSeconds": 42
+  }
+  ```
+- **Headers:** `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0`
+
+> Note: this limiter is process-local memory. Counters reset on restart and are not shared across multiple instances.
+
+---
+
 ## `GET /api/stocks`
 
-Returns normalized stock data for the screener.
+Returns normalized stock rows for the screener.
 
-### Query parameters
+### Accepted query parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `symbols` | `string` (comma-separated) | All 25 tracked symbols | Filter to specific symbols (must be in the allowlist) |
+| Parameter | Type | Required | Default | Details |
+|-----------|------|----------|---------|---------|
+| `symbols` | `string` (comma-separated tickers) | No | all symbols in `STOCK_SYMBOLS` | Values are trimmed, uppercased, and filtered against the allowlist |
 
-Validated with Zod. Unknown symbols are silently filtered out; at least one valid symbol must remain or a 400 is returned.
+Validation is done with Zod:
 
-### Response shape
+- Unknown symbols are silently removed
+- If no valid symbols remain, API returns `400`
+
+### Success response
+
+- **Status:** `200`
+- **Content-Type:** `application/json`
+- **Body shape:**
 
 ```json
 {
@@ -20,13 +60,14 @@ Validated with Zod. Unknown symbols are silently filtered out; at least one vali
     {
       "symbol": "AAPL",
       "name": "Apple Inc",
+      "industry": "Technology",
       "price": 178.72,
       "previousClose": 176.55,
       "change": 2.17,
       "percentChange": 1.23,
       "highToday": 179.61,
       "lowToday": 176.21,
-      "openPrice": 177.00,
+      "openPrice": 177.0,
       "marketCap": 2840000,
       "fiftyTwoWeekHigh": 199.62,
       "fiftyTwoWeekLow": 164.08,
@@ -37,27 +78,41 @@ Validated with Zod. Unknown symbols are silently filtered out; at least one vali
 }
 ```
 
-`marketCap` is in millions of USD (Finnhub convention). `priceVs52wHigh` is computed as `((price - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100` and rounded to 2 decimals. 52-week fields can be `null` if Finnhub metric data is unavailable.
+Field notes:
 
-### Caching
+- `marketCap` uses Finnhub units (millions USD)
+- `fiftyTwoWeekHigh`, `fiftyTwoWeekLow`, and `priceVs52wHigh` can be `null`
+- `priceVs52wHigh` is calculated as `((price - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100`, rounded to 2 decimals
 
-No caching applied — this route is fully dynamic. Each request hits Finnhub REST in real time.
+### Error responses
 
-### Rate limiting
+| Status | Body shape | When |
+|--------|------------|------|
+| `400` | `{ "error": "Invalid parameters", "details": { ... } }` | Query validation fails |
 
-Enforced by `proxy.ts`: **30 requests per minute per IP**. Exceeding the limit returns `429 Too Many Requests` with a `Retry-After` header.
+### Caching behavior
+
+`/api/stocks` itself is dynamic, but it composes cached upstream reads in `lib/finnhub.ts`:
+
+- Quote cache: in-memory, 30s TTL (`fetchQuote`)
+- Profile cache: in-memory + `use cache` (`cacheLife("days")`) (`fetchCachedProfile`)
+- Basic financials: `use cache` (`cacheLife("hours")`) (`fetchBasicFinancials`)
 
 ---
 
 ## `GET /api/market`
 
-Returns current US market status and holiday calendar.
+Returns current US market status and holiday calendar in one payload.
 
-### Query parameters
+### Accepted query parameters
 
 None.
 
-### Response shape
+### Success response
+
+- **Status:** `200`
+- **Content-Type:** `application/json`
+- **Body shape:**
 
 ```json
 {
@@ -79,72 +134,82 @@ None.
 }
 ```
 
-### Caching
+### Error responses
 
-`status` is served from a 30-second in-memory cache in `lib/finnhub.ts`. `holidays` uses `'use cache'` with `cacheLife('days')`.
+| Status | Body shape | When |
+|--------|------------|------|
+| `502` | `{ "error": "Failed to fetch market information" }` | Upstream Finnhub call fails |
 
-### Rate limiting
+### Caching behavior
 
-Enforced by `proxy.ts`: **30 requests per minute per IP**.
+- `status`: in-memory cache, 30s TTL (`fetchMarketStatus`)
+- `holidays`: `use cache` + `cacheLife("days")` (`fetchMarketHolidays`)
 
 ---
 
 ## `POST /api/insight`
 
-Generates a short AI-written analyst-style commentary for a stock. Streams tokens via `ReadableStream`.
+Generates short analyst-style commentary text for one stock. Response is streamed plain text.
 
-### Request body (JSON)
+### Accepted request body (`application/json`)
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `symbol` | `string` | Yes | Stock ticker (e.g. `"AAPL"`) |
-| `name` | `string` | Yes | Company name |
-| `price` | `number` | Yes | Current price |
-| `change` | `number` | Yes | Absolute price change |
-| `percentChange` | `number` | Yes | Percentage change |
-| `marketCap` | `number` | Yes | Market cap in millions USD |
-| `industry` | `string` | Yes | Finnhub industry classification |
-| `metrics` | `object` | No | Extended metrics (see below) |
+| Field | Type | Required | Validation / Notes |
+|-------|------|----------|--------------------|
+| `symbol` | `string` | Yes | `1..10` chars |
+| `name` | `string` | Yes | non-empty |
+| `price` | `number` | Yes | numeric |
+| `change` | `number` | Yes | numeric |
+| `percentChange` | `number` | Yes | numeric |
+| `marketCap` | `number` | Yes | Finnhub units (millions USD) |
+| `industry` | `string` | Yes | string |
+| `metrics` | `object` | No | optional object below |
 
-**Optional `metrics` object:**
+Optional `metrics` fields (all numeric, optional):
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `peRatio` | `number` | Price-to-earnings ratio |
-| `eps` | `number` | Earnings per share |
-| `beta` | `number` | Beta coefficient |
-| `dividendYield` | `number` | Indicated annual dividend yield (%) |
-| `roe` | `number` | Return on equity (%) |
-| `debtToEquity` | `number` | Total debt to equity ratio |
+- `peRatio`
+- `eps`
+- `beta`
+- `dividendYield`
+- `roe`
+- `debtToEquity`
 
-Validated with Zod. Invalid body returns `400` with error details.
+### Success response
 
-### Response
+- **Status:** `200`
+- **Content-Type:** `text/plain; charset=utf-8`
+- **Body:** streamed UTF-8 text (`ReadableStream`)
+- **Custom header:** `X-Insight-Cached: true|false`
 
-**Success (200):** `Content-Type: text/plain; charset=utf-8`
+Behavior:
 
-The response body is a `ReadableStream` of UTF-8 text. Tokens arrive incrementally (token-by-token for cache misses; single chunk for cache hits). Read with `response.body.getReader()` + `TextDecoder`.
+- cache hit => one-chunk stream from cache
+- cache miss => token-streamed chunks from OpenAI
 
-Custom header `X-Insight-Cached: true|false` indicates whether the response was served from cache.
+### Error responses
 
-**Errors:**
+| Status | Body shape | When |
+|--------|------------|------|
+| `400` | `{ "error": "Invalid JSON body" }` | Request body is not valid JSON |
+| `400` | `{ "error": "Invalid request body", "details": { ... } }` | Zod body validation fails |
+| `500` | `{ "error": "AI service not configured" }` | `OPENAI_API_KEY` missing |
+| `502` | `{ "error": "AI service temporarily unavailable" }` | OpenAI request fails |
 
-| Status | Body | Cause |
-|--------|------|-------|
-| `400` | `{ "error": "...", "details": {...} }` | Invalid or missing request body |
-| `500` | `{ "error": "AI service not configured" }` | `OPENAI_API_KEY` env var missing |
-| `502` | `{ "error": "AI service temporarily unavailable" }` | OpenAI API call failed |
+Error responses are JSON (not stream responses).
 
-Error responses are JSON (not streams) so the client can parse them cleanly.
+### Caching behavior
 
-### Caching
+Server-side and client-side caching both exist:
 
-**Server-side:** In-memory `Map` with **1-hour TTL** per symbol. Cached insights are served as a single-chunk stream. Expired entries are lazily deleted on read.
+- **Server cache (`lib/insight-cache.ts`):**
+  - in-memory `Map`
+  - key: uppercased `symbol`
+  - TTL: 1 hour
+  - expired entries deleted lazily on read
+- **Client cache (`useInsight` hook):**
+  - module-level in-memory map to avoid repeat fetches in the same browser session
 
-**Client-side:** Module-level `Map` in the `useInsight` hook prevents redundant fetches when re-opening the modal for the same stock within a session.
+Limitations:
 
-**Limitations:** In-memory cache does not survive server restarts and is per-process. Would need Redis/Upstash for production horizontal scaling.
-
-### Rate limiting
-
-Enforced by `proxy.ts` (same as `/api/stocks`): **30 requests per minute per IP**.
+- in-memory caches are per process
+- not shared between instances
+- reset on server restart
