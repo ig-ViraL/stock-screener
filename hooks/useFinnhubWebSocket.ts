@@ -20,6 +20,10 @@ export function useFinnhubWebSocket({
   onPriceUpdate,
   enabled = true,
 }: UseFinnhubWebSocketOptions) {
+  const simulateWs =
+    process.env.NEXT_PUBLIC_FINNHUB_WS_SIMULATE === "true" ||
+    process.env.NEXT_PUBLIC_FINNHUB_WS_SIMULATE === "1";
+
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -132,7 +136,46 @@ export function useFinnhubWebSocket({
     };
   }, [enabled, flushUpdates]);
 
+  useEffect(() => {
+    if (!enabled || !simulateWs) return;
+
+    // Simulation mode: mimic a live feed so the dashboard updates visually.
+    setStatus("connected");
+
+    const lastPrices = new Map<string, number>();
+    const symbolsSnapshot = symbolsRef.current;
+
+    const hashToBase = (s: string) => {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+      const positive = Math.abs(h);
+      // Stable base per symbol, so it "looks" consistent across reloads.
+      return 20 + (positive % 480);
+    };
+
+    for (const symbol of symbolsSnapshot) {
+      lastPrices.set(symbol, hashToBase(symbol));
+    }
+
+    const simTickMs = 800;
+    const interval = setInterval(() => {
+      const batch = new Map<string, number>();
+      for (const symbol of symbolsRef.current) {
+        const prev = lastPrices.get(symbol) ?? hashToBase(symbol);
+        // Random walk: small % step each tick.
+        const step = (Math.random() - 0.5) * 0.01; // +/- ~0.5%
+        const next = Math.max(0.01, prev * (1 + step));
+        lastPrices.set(symbol, next);
+        batch.set(symbol, Number(next.toFixed(2)));
+      }
+      onPriceUpdateRef.current(batch);
+    }, simTickMs);
+
+    return () => clearInterval(interval);
+  }, [enabled, simulateWs]);
+
   const ensureConnected = useCallback(() => {
+    if (simulateWs) return;
     if (
       enabled &&
       isMountedRef.current &&
@@ -150,7 +193,8 @@ export function useFinnhubWebSocket({
     shouldReconnectRef.current = true;
 
     if (enabled) {
-      connect();
+      if (!simulateWs) connect();
+      else setStatus("connected");
     } else {
       setStatus("disconnected");
     }
