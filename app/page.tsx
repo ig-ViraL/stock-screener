@@ -13,7 +13,7 @@ import type { MarketInfo } from "@/lib/types";
 
 async function StockData() {
   await connection();
-  const stocks = await fetchAllStocks(STOCK_SYMBOLS);
+  const stocks = await fetchAllStocks(STOCK_SYMBOLS.slice(0, 5));
   return <StockTable initialStocks={stocks} />;
 }
 

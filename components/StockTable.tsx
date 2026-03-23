@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useFinnhubWebSocket } from "@/hooks/useFinnhubWebSocket";
 import { useStockFilters } from "@/hooks/useStockFilters";
@@ -16,8 +16,12 @@ import {
 import { applyFilters } from "@/lib/filters";
 import { InsightModal } from "@/components/InsightModal";
 import type { Stock } from "@/lib/types";
+import { STOCK_SYMBOLS } from "@/lib/symbols";
 
 const FLASH_DURATION_MS = 2_000;
+const BATCH_SIZE = 5;
+const INTER_BATCH_DELAY_MS = 900;
+const MAX_BATCH_ATTEMPTS = 3;
 
 interface StockTableProps {
   initialStocks: Stock[];
@@ -32,6 +36,12 @@ export function StockTable({ initialStocks }: StockTableProps) {
   const flashTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map()
   );
+  const isBatchLoadingRef = useRef(false);
+  const symbolIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    STOCK_SYMBOLS.forEach((s, i) => m.set(s, i));
+    return m;
+  }, []);
 
   const {
     filters,
@@ -106,6 +116,131 @@ export function StockTable({ initialStocks }: StockTableProps) {
     [flashRows]
   );
 
+  const sleep = useCallback((ms: number) => {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }, []);
+
+  const mergeStocksBySymbol = useCallback(
+    (incoming: Stock[]) => {
+      if (incoming.length === 0) return;
+      setStocks((prev) => {
+        const map = new Map(prev.map((s) => [s.symbol, s]));
+        for (const stock of incoming) map.set(stock.symbol, stock);
+
+        const merged = Array.from(map.values());
+        merged.sort(
+          (a, b) => (symbolIndex.get(a.symbol) ?? 0) - (symbolIndex.get(b.symbol) ?? 0)
+        );
+        return merged;
+      });
+    },
+    [symbolIndex]
+  );
+
+  const fetchStocksCore = useCallback(async (symbols: string[]) => {
+    const qs = new URLSearchParams({ symbols: symbols.join(",") });
+
+    const res = await fetch(`/api/stocks?${qs}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const data = (await res.json()) as { stocks: Stock[] };
+    return data.stocks;
+  }, []);
+
+  const fetchStocksCoreWithRetries = useCallback(
+    async (requestedSymbols: string[]) => {
+      const resultMap = new Map<string, Stock>();
+      let pendingSymbols = requestedSymbols.slice();
+
+      for (let attempt = 0; attempt < MAX_BATCH_ATTEMPTS; attempt++) {
+        if (pendingSymbols.length === 0) break;
+
+        const batchStocks = await fetchStocksCore(pendingSymbols);
+        for (const stock of batchStocks) resultMap.set(stock.symbol, stock);
+
+        pendingSymbols = pendingSymbols.filter(
+          (sym) => !resultMap.has(sym)
+        );
+
+        if (pendingSymbols.length === 0) break;
+        await sleep(INTER_BATCH_DELAY_MS * (attempt + 1));
+      }
+
+      return requestedSymbols
+        .map((sym) => resultMap.get(sym))
+        .filter((s): s is Stock => Boolean(s));
+    },
+    [fetchStocksCore, sleep]
+  );
+
+  useEffect(() => {
+    // Incrementally load the rest of the allowlisted symbols in batches of 5.
+    // This keeps Finnhub calls low enough to avoid rate limiting and lets the
+    // user see rows immediately.
+    if (isBatchLoadingRef.current) return;
+
+    const loadedSymbols = new Set(initialStocks.map((s) => s.symbol));
+    const remainingSymbols = STOCK_SYMBOLS.filter(
+      (sym) => !loadedSymbols.has(sym)
+    );
+
+    if (remainingSymbols.length === 0) return;
+
+    let cancelled = false;
+    isBatchLoadingRef.current = true;
+
+    (async () => {
+      try {
+        for (
+          let index = 0;
+          index < remainingSymbols.length;
+          index += BATCH_SIZE
+        ) {
+          if (cancelled) return;
+          const batchSymbols = remainingSymbols.slice(index, index + BATCH_SIZE);
+          const batchStocks = await fetchStocksCoreWithRetries(batchSymbols);
+          mergeStocksBySymbol(batchStocks);
+          for (const stock of batchStocks) loadedSymbols.add(stock.symbol);
+          await sleep(INTER_BATCH_DELAY_MS);
+        }
+
+        // If we hit occasional rate limiting, retry just the missing symbols once
+        // more to try to keep the UI at >= 20 visible rows.
+        if (!cancelled && loadedSymbols.size < 20) {
+          const missingSymbols = remainingSymbols.filter(
+            (sym) => !loadedSymbols.has(sym)
+          );
+
+          for (let index = 0; index < missingSymbols.length; index += BATCH_SIZE) {
+            if (cancelled) return;
+            const batchSymbols = missingSymbols.slice(
+              index,
+              index + BATCH_SIZE
+            );
+            const batchStocks = await fetchStocksCoreWithRetries(batchSymbols);
+            mergeStocksBySymbol(batchStocks);
+            for (const stock of batchStocks) loadedSymbols.add(stock.symbol);
+            await sleep(INTER_BATCH_DELAY_MS);
+          }
+        }
+      } catch (err) {
+        console.error("[StockTable] Failed incremental load:", err);
+        if (!cancelled) {
+          setRefreshError(
+            "Failed to load all stocks (rate limited). Some may be missing."
+          );
+        }
+      } finally {
+        isBatchLoadingRef.current = false;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      isBatchLoadingRef.current = false;
+    };
+  }, [initialStocks, fetchStocksCoreWithRetries, mergeStocksBySymbol, sleep]);
+
   const symbols = stocks.map((s) => s.symbol);
 
   const { status } = useFinnhubWebSocket({
@@ -114,16 +249,21 @@ export function StockTable({ initialStocks }: StockTableProps) {
   });
 
   const handleRefresh = async () => {
+    if (isBatchLoadingRef.current) return;
     setIsRefreshing(true);
     setRefreshError(null);
     try {
-      const res = await fetch("/api/stocks");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setStocks(data.stocks);
+      isBatchLoadingRef.current = true;
+      for (let i = 0; i < STOCK_SYMBOLS.length; i += BATCH_SIZE) {
+        const batchSymbols = STOCK_SYMBOLS.slice(i, i + BATCH_SIZE);
+        const batchStocks = await fetchStocksCoreWithRetries(batchSymbols);
+        mergeStocksBySymbol(batchStocks);
+        await sleep(INTER_BATCH_DELAY_MS);
+      }
     } catch {
       setRefreshError("Failed to fetch latest prices. Try again.");
     } finally {
+      isBatchLoadingRef.current = false;
       setIsRefreshing(false);
     }
   };
