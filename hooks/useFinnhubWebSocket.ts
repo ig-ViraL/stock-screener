@@ -118,6 +118,17 @@ export function useFinnhubWebSocket({
     };
   }, [enabled, flushUpdates]);
 
+  const ensureConnected = useCallback(() => {
+    if (
+      enabled &&
+      !wsRef.current &&
+      !reconnectTimer.current
+    ) {
+      reconnectAttempts.current = 0;
+      connect();
+    }
+  }, [enabled, connect]);
+
   useEffect(() => {
     if (enabled) {
       connect();
@@ -132,6 +143,24 @@ export function useFinnhubWebSocket({
       }
     };
   }, [connect, enabled]);
+
+  useEffect(() => {
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) ensureConnected();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") ensureConnected();
+    };
+
+    window.addEventListener("pageshow", handlePageShow);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [ensureConnected]);
 
   return { status };
 }
