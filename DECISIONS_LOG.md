@@ -140,3 +140,18 @@ Copy the template below to the **bottom** of this file (newest last). Use ISO da
 - **Why:** Keeps symbol universe API-driven, avoids hardcoded maintenance, and stays within free-tier constraints by preserving a bounded default set.
 - **Alternatives considered:** Load all US symbols into dashboard (rejected — too many per-request quote/profile calls for free-tier rate limits); keep static list (rejected — stale and manual).
 
+### 2026-03-23 — AI-powered streaming insights (`/api/insight`)
+
+- **Context:** Assignment requires per-stock AI commentary streamed token-by-token via ReadableStream, cached to avoid redundant LLM calls, with graceful failure isolation.
+- **Decision:** `POST /api/insight` route handler using `openai` SDK (gpt-4o-mini). Server constructs a `ReadableStream` manually — for cache hits, enqueues full text in one chunk; for misses, pipes OpenAI's streaming completion token-by-token. Two-layer cache:
+  1. **Server:** In-memory `Map` in `lib/insight-cache.ts` with 1-hour TTL per symbol. Lazy expiry on read.
+  2. **Client:** Module-level `Map` in `hooks/useInsight.ts` so re-opening the modal for the same stock during a session shows the result instantly (no fetch).
+- **UI:** Portal-based `InsightModal` component with streaming text display, blinking cursor indicator, skeleton loading state, inline error + retry, and "AI-generated" disclaimer. Accessible: focus trap, Escape-to-close, `role="dialog"`, scroll lock.
+- **Integration points:** Dashboard table gets a 7th column with a sparkle icon button per row. Stock detail header gets an "AI Analysis" button via `InsightButton` client component (server component renders client child).
+- **Error isolation:** `useInsight` hook catches all errors internally and surfaces them via `error` state — never thrown to crash parent components. Missing `OPENAI_API_KEY` returns 500 JSON; OpenAI API failures return 502 JSON. The modal is rendered in a portal, so errors cannot propagate to the table or detail page Suspense boundaries.
+- **Why OpenAI SDK directly (not Vercel `ai` SDK):** Keeps dependency surface minimal (matches project philosophy of few deps: next, react, zod). Manually constructing the `ReadableStream` demonstrates understanding of the streaming primitive.
+- **Why POST (not GET):** Request body contains structured stock data with nested optional metrics; GET query strings are awkward for nested objects.
+- **Cache invalidation:** 1-hour TTL chosen because stock context shifts intraday but not so frequently that every click warrants a new LLM call. In-memory cache does not survive restarts and is per-process; acceptable for single-instance assignment, would need Redis/Upstash in production.
+- **Alternatives considered:** Vercel `ai` SDK with `streamText` (rejected — abstracts away ReadableStream plumbing which is the test); SSE / `text/event-stream` format (rejected — plain text streaming is simpler for 2-3 sentences and avoids client-side event parsing overhead); GET with symbol-only param + server-side Finnhub fetch (rejected — doubles Finnhub API pressure; client already has the data).
+- **Follow-up:** Update DECISIONS.md section 6, API.md, README.md checklist.
+

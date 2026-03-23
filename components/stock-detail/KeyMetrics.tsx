@@ -78,22 +78,24 @@ export async function KeyMetrics({ symbol }: KeyMetricsProps) {
   ];
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-        Key Metrics
-      </h2>
-      {sections.map((section) => (
-        <div key={section.title}>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            {section.title}
-          </h3>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {section.metrics.map((metric) => (
-              <MetricCard key={metric.label} {...metric} />
-            ))}
+    <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="space-y-6">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+          Key Metrics
+        </h2>
+        {sections.map((section) => (
+          <div key={section.title}>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              {section.title}
+            </h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {section.metrics.map((metric) => (
+                <MetricCard key={metric.label} {...metric} />
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

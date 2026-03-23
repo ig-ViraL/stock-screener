@@ -36,6 +36,9 @@ export interface Stock {
   lowToday: number;
   openPrice: number;
   marketCap: number;
+  fiftyTwoWeekHigh: number | null;
+  fiftyTwoWeekLow: number | null;
+  priceVs52wHigh: number | null;
 }
 
 export interface WebSocketTrade {

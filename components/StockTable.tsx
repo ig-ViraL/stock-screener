@@ -10,9 +10,11 @@ import {
   formatPrice,
   formatChange,
   formatPercent,
+  formatNullablePercent,
   formatMarketCap,
 } from "@/lib/format";
 import { applyFilters } from "@/lib/filters";
+import { InsightModal } from "@/components/InsightModal";
 import type { Stock } from "@/lib/types";
 
 const FLASH_DURATION_MS = 2_000;
@@ -26,6 +28,7 @@ export function StockTable({ initialStocks }: StockTableProps) {
   const [flashedSymbols, setFlashedSymbols] = useState<Set<string>>(new Set());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [insightStock, setInsightStock] = useState<Stock | null>(null);
   const flashTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map()
   );
@@ -80,8 +83,22 @@ export function StockTable({ initialStocks }: StockTableProps) {
 
           const change = newPrice - stock.previousClose;
           const percentChange = (change / stock.previousClose) * 100;
+          const priceVs52wHigh =
+            stock.fiftyTwoWeekHigh && stock.fiftyTwoWeekHigh > 0
+              ? ((newPrice - stock.fiftyTwoWeekHigh) / stock.fiftyTwoWeekHigh) *
+                100
+              : null;
 
-          return { ...stock, price: newPrice, change, percentChange };
+          return {
+            ...stock,
+            price: newPrice,
+            change,
+            percentChange,
+            priceVs52wHigh:
+              priceVs52wHigh !== null
+                ? Number(priceVs52wHigh.toFixed(2))
+                : null,
+          };
         })
       );
       flashRows(updates.keys());
@@ -158,6 +175,11 @@ export function StockTable({ initialStocks }: StockTableProps) {
               <th className="px-4 py-3 text-right">Change</th>
               <th className="px-4 py-3 text-right">% Change</th>
               <th className="px-4 py-3 text-right">Market Cap</th>
+              <th className="px-4 py-3 text-right">52W High</th>
+              <th className="px-4 py-3 text-right">vs 52W High</th>
+              <th className="w-12 px-2 py-3 text-center">
+                <span className="sr-only">AI Insight</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -166,6 +188,12 @@ export function StockTable({ initialStocks }: StockTableProps) {
               const changeColor = isPositive
                 ? "text-emerald-600 dark:text-emerald-400"
                 : "text-red-600 dark:text-red-400";
+              const vs52Color =
+                stock.priceVs52wHigh === null
+                  ? "text-zinc-500 dark:text-zinc-400"
+                  : stock.priceVs52wHigh >= 0
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-red-600 dark:text-red-400";
 
               const isFlashing = flashedSymbols.has(stock.symbol);
 
@@ -203,13 +231,48 @@ export function StockTable({ initialStocks }: StockTableProps) {
                   <td className="px-4 py-3 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
                     {formatMarketCap(stock.marketCap)}
                   </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
+                    {stock.fiftyTwoWeekHigh !== null
+                      ? formatPrice(stock.fiftyTwoWeekHigh)
+                      : "—"}
+                  </td>
+                  <td
+                    className={`px-4 py-3 text-right tabular-nums font-medium ${vs52Color}`}
+                  >
+                    {formatNullablePercent(stock.priceVs52wHigh)}
+                  </td>
+                  <td className="px-2 py-3 text-center">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setInsightStock(stock);
+                      }}
+                      title="AI Analysis"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-violet-500 transition-colors hover:bg-violet-50 hover:text-violet-700 dark:text-violet-400 dark:hover:bg-violet-950/40 dark:hover:text-violet-300"
+                    >
+                      <svg
+                        className="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        strokeWidth={1.5}
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"
+                        />
+                      </svg>
+                    </button>
+                  </td>
                 </tr>
               );
             })}
             {filteredStocks.length === 0 && (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={9}
                   className="px-4 py-12 text-center"
                 >
                   <p className="text-zinc-500 dark:text-zinc-400">
@@ -230,6 +293,14 @@ export function StockTable({ initialStocks }: StockTableProps) {
           </tbody>
         </table>
       </div>
+
+      {insightStock ? (
+        <InsightModal
+          isOpen={true}
+          onClose={() => setInsightStock(null)}
+          stock={insightStock}
+        />
+      ) : null}
     </div>
   );
 }

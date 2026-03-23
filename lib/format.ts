@@ -22,6 +22,11 @@ export function formatPercent(pct: number): string {
   return `${sign}${pct.toFixed(2)}%`;
 }
 
+export function formatNullablePercent(pct: number | null | undefined): string {
+  if (pct === null || pct === undefined || Number.isNaN(pct)) return "—";
+  return formatPercent(pct);
+}
+
 export function formatChange(change: number): string {
   const sign = change >= 0 ? "+" : "";
   return `${sign}${change.toFixed(2)}`;

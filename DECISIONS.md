@@ -12,13 +12,13 @@ This document records **why** the stock screener is built the way it is—not a 
 
 | Surface | Strategy | Rationale |
 |---------|----------|-----------|
-| Main screener (list + live prices) | **Dynamic** | Quotes and WebSocket-driven state change continuously; forcing static or stale cache would contradict “live” UX. |
+| Main screener (list + live prices) | **Dynamic** | Quotes and WebSocket-driven state change continuously; forcing static or stale cache would contradict "live" UX. |
 | Stock detail | **Dynamic** with optional **cached** fragments | Core narrative: current context matters. Company **profile**-style fields (name, industry, description) change rarely; those can use **`'use cache'`** with a sensible scope/TTL so we do not hammer Finnhub for identical profile data on every navigation. Exact boundaries should match the implemented route split. |
 | API route handlers | **Dynamic** | Proxies and LLM calls are request-scoped; no blanket caching unless explicitly marked. |
 
 **Suspense:** Any route that waits on server data should use **Suspense** with a **skeleton** UI so the shell renders immediately and streaming/fallback behavior stays predictable.
 
-**What we avoid:** Relying on “it used to revalidate” patterns from older Next versions without `'use cache'` or explicit cache APIs.
+**What we avoid:** Relying on "it used to revalidate" patterns from older Next versions without `'use cache'` or explicit cache APIs.
 
 ---
 
@@ -28,7 +28,7 @@ Next.js 16 deprecates **`middleware.ts`** for the kind of network interception w
 
 **Decision:** Implement **rate limiting (30 requests per minute per IP)** and any other request interception in **`proxy.ts`**, not in `middleware.ts`.
 
-**Why it matters:** Keeps behavior aligned with the framework’s supported interception model for this version and avoids shipping a solution evaluators flag as a red flag.
+**Why it matters:** Keeps behavior aligned with the framework's supported interception model for this version and avoids shipping a solution evaluators flag as a red flag.
 
 ---
 
@@ -69,7 +69,7 @@ Next.js 16 deprecates **`middleware.ts`** for the kind of network interception w
 | File | Role |
 |------|------|
 | [`lib/filters.ts`](./lib/filters.ts) | Types, Zod schema, `applyFilters()`, `getCapTier()` |
-| [`hooks/useStockFilters.ts`](./hooks/useStockFilters.ts) | URL ↔ filter state bridge, debounce, `clearFilters` |
+| [`hooks/useStockFilters.ts`](./hooks/useStockFilters.ts) | URL <-> filter state bridge, debounce, `clearFilters` |
 | [`components/FilterBar.tsx`](./components/FilterBar.tsx) | UI: number inputs, cap-tier toggles, sector pills, clear button |
 
 ---
@@ -116,13 +116,28 @@ Next.js 16 deprecates **`middleware.ts`** for the kind of network interception w
 
 ## 6. AI-powered insight (`/api/insight`)
 
-**Behavior:** Short **2–3 sentence** analyst-style commentary based on structured inputs (quote + key metrics we send server-side).
+**Behavior:** Short **2-3 sentence** analyst-style commentary based on structured inputs (quote + key metrics sent from the client). Uses OpenAI `gpt-4o-mini` via the `openai` SDK.
 
-**Streaming:** The route returns a **`ReadableStream`** so tokens **stream** into the UI; a single blob after a long wait does not meet the bar.
+**Streaming:** The route returns `new Response(readableStream)` with `Content-Type: text/plain; charset=utf-8`. For cache misses, tokens from `openai.chat.completions.create({ stream: true })` are piped through a `ReadableStream` -- the client reads via `response.body.getReader()` + `TextDecoder` and updates state on each chunk. For cache hits, the full text is enqueued in a single chunk (same API, instant delivery).
 
-**Caching:** Cache generated insights **per symbol** (and optionally a **time bucket** or version key) so repeat clicks do not re-call the LLM every time. **Invalidation:** document TTL or “new session” policy in code comments and [API.md](./API.md); optional manual refresh if product needs it.
+**Caching (two layers):**
 
-**Failure isolation:** If the LLM fails, show an **inline error** on the insight control only; the **screener list and WebSocket feed** keep working.
+| Layer | Storage | Key | TTL | Rationale |
+|-------|---------|-----|-----|-----------|
+| Server | In-memory `Map` in `lib/insight-cache.ts` | Symbol (uppercase) | 1 hour | Stock context shifts intraday; hourly refresh balances freshness vs LLM cost. Does not survive restarts or scale across processes -- acceptable for single-instance demo, would need Redis in production. |
+| Client | Module-level `Map` in `hooks/useInsight.ts` | Symbol (uppercase) | Session lifetime | Avoids network round-trip when re-opening the modal for the same stock. Cleared naturally on page navigation. |
+
+**Failure isolation:** `useInsight` catches all errors and exposes them via `error` state -- errors are never thrown to crash parent components. The modal renders in a `createPortal` to `document.body`, so no error from the AI path can propagate to `StockTable`, `StockDetailHeader`, or any Suspense boundary. Missing `OPENAI_API_KEY` returns 500; OpenAI API failure returns 502; both as JSON so the client can parse cleanly.
+
+**UI:** `InsightModal` (portal-based, accessible) shows streaming text with a blinking cursor, skeleton loading before the first token, inline error with retry button, and an "AI-generated" disclaimer.
+
+| File | Role |
+|------|------|
+| [`lib/insight-cache.ts`](./lib/insight-cache.ts) | Server-side in-memory cache (get/set with TTL) |
+| [`app/api/insight/route.ts`](./app/api/insight/route.ts) | POST route handler: Zod validation, cache check, OpenAI streaming, ReadableStream response |
+| [`hooks/useInsight.ts`](./hooks/useInsight.ts) | Client hook: fetch + getReader, client cache, error isolation |
+| [`components/InsightModal.tsx`](./components/InsightModal.tsx) | Portal modal with streaming display |
+| [`components/stock-detail/InsightButton.tsx`](./components/stock-detail/InsightButton.tsx) | Client button for detail page header |
 
 ---
 
@@ -148,7 +163,7 @@ Next.js 16 deprecates **`middleware.ts`** for the kind of network interception w
 
 ## 9. Scope and intentional cuts (time-boxing)
 
-Examples of defensible **non-goals** for a 4–5 hour slice:
+Examples of defensible **non-goals** for a 4-5 hour slice:
 
 - **No user accounts / auth** — Screeners are often single-session tools unless required.
 - **No full portfolio or order flow** — Out of scope for a screening MVP.
@@ -174,30 +189,41 @@ Examples of defensible **non-goals** for a 4–5 hour slice:
 |------|----------------|--------|
 | App shell | [`app/layout.tsx`](./app/layout.tsx), [`app/page.tsx`](./app/page.tsx) | Done |
 | Homepage screener | [`app/page.tsx`](./app/page.tsx) with `<Suspense>` + [`StockTableSkeleton`](./components/StockTableSkeleton.tsx) | Done |
-| Stock table (client) | [`components/StockTable.tsx`](./components/StockTable.tsx) — 25 tickers, live WS prices, manual refresh | Done |
-| WebSocket hook | [`hooks/useFinnhubWebSocket.ts`](./hooks/useFinnhubWebSocket.ts) — connect, reconnect, throttled flush, cleanup | Done |
-| Connection indicator | [`components/ConnectionStatus.tsx`](./components/ConnectionStatus.tsx) — Live / Reconnecting / Disconnected badge | Done |
-| API route | [`app/api/stocks/route.ts`](./app/api/stocks/route.ts) — Zod-validated, normalized Finnhub REST proxy | Done |
-| Rate limiting | [`proxy.ts`](./proxy.ts) — 30 req/min/IP, in-memory map, matcher `/api/:path*` | Done |
-| React Compiler | [`next.config.ts`](./next.config.ts) — `reactCompiler: true` | Done |
+| Stock table (client) | [`components/StockTable.tsx`](./components/StockTable.tsx) -- 25 tickers, live WS prices, manual refresh | Done |
+| WebSocket hook | [`hooks/useFinnhubWebSocket.ts`](./hooks/useFinnhubWebSocket.ts) -- connect, reconnect, throttled flush, cleanup | Done |
+| Connection indicator | [`components/ConnectionStatus.tsx`](./components/ConnectionStatus.tsx) -- Live / Reconnecting / Disconnected badge | Done |
+| API route | [`app/api/stocks/route.ts`](./app/api/stocks/route.ts) -- Zod-validated, normalized Finnhub REST proxy | Done |
+| Rate limiting | [`proxy.ts`](./proxy.ts) -- 30 req/min/IP, in-memory map, matcher `/api/:path*` | Done |
+| React Compiler | [`next.config.ts`](./next.config.ts) -- `reactCompiler: true` | Done |
 | Shared lib | [`lib/types.ts`](./lib/types.ts), [`lib/finnhub.ts`](./lib/finnhub.ts), [`lib/format.ts`](./lib/format.ts) | Done |
 | Dependencies | Next **16.2.1**, React **19.2.4**, Tailwind **4**, **zod**, **babel-plugin-react-compiler** | Done |
 
 | URL-driven filters | [`lib/filters.ts`](./lib/filters.ts), [`hooks/useStockFilters.ts`](./hooks/useStockFilters.ts), [`components/FilterBar.tsx`](./components/FilterBar.tsx) | Done |
-| Industry in Stock | [`lib/types.ts`](./lib/types.ts), [`lib/finnhub.ts`](./lib/finnhub.ts) — `industry` field added | Done |
+| Industry in Stock | [`lib/types.ts`](./lib/types.ts), [`lib/finnhub.ts`](./lib/finnhub.ts) -- `industry` field added | Done |
 
 **Phase 2 complete**
 
 | Item | Path / version | Status |
 |------|----------------|--------|
-| Stock detail page | [`app/stock/[symbol]/page.tsx`](./app/stock/[symbol]/page.tsx) — dynamic route, `generateMetadata`, Suspense per section | Done |
+| Stock detail page | [`app/stock/[symbol]/page.tsx`](./app/stock/[symbol]/page.tsx) -- dynamic route, `generateMetadata`, Suspense per section | Done |
 | Detail loading/error/404 | [`loading.tsx`](./app/stock/[symbol]/loading.tsx), [`error.tsx`](./app/stock/[symbol]/error.tsx), [`not-found.tsx`](./app/stock/[symbol]/not-found.tsx) | Done |
-| Detail header | [`StockDetailHeader.tsx`](./components/stock-detail/StockDetailHeader.tsx) — price snapshot, day/52wk range bars | Done |
-| Key metrics (server) | [`KeyMetrics.tsx`](./components/stock-detail/KeyMetrics.tsx) — P/E, EPS, beta, ROE, D/E grouped by category | Done |
-| Company profile (server) | [`CompanyProfile.tsx`](./components/stock-detail/CompanyProfile.tsx) — exchange, IPO, country, website | Done |
-| Analyst recommendations (server) | [`AnalystRecommendations.tsx`](./components/stock-detail/AnalystRecommendations.tsx) — stacked bar chart | Done |
-| News section (server) | [`NewsSection.tsx`](./components/stock-detail/NewsSection.tsx) — 8 headlines with thumbnails | Done |
-| Screener row links | [`StockTable.tsx`](./components/StockTable.tsx) — symbol/name link to `/stock/[symbol]` | Done |
-| Finnhub fetchers | [`lib/finnhub.ts`](./lib/finnhub.ts) — `fetchBasicFinancials`, `fetchCompanyNews`, `fetchRecommendationTrends`, `fetchStockDetail` | Done |
+| Detail header | [`StockDetailHeader.tsx`](./components/stock-detail/StockDetailHeader.tsx) -- price snapshot, day/52wk range bars | Done |
+| Key metrics (server) | [`KeyMetrics.tsx`](./components/stock-detail/KeyMetrics.tsx) -- P/E, EPS, beta, ROE, D/E grouped by category | Done |
+| Company profile (server) | [`CompanyProfile.tsx`](./components/stock-detail/CompanyProfile.tsx) -- exchange, IPO, country, website | Done |
+| Analyst recommendations (server) | [`AnalystRecommendations.tsx`](./components/stock-detail/AnalystRecommendations.tsx) -- stacked bar chart | Done |
+| News section (server) | [`NewsSection.tsx`](./components/stock-detail/NewsSection.tsx) -- 8 headlines with thumbnails | Done |
+| Screener row links | [`StockTable.tsx`](./components/StockTable.tsx) -- symbol/name link to `/stock/[symbol]` | Done |
+| Finnhub fetchers | [`lib/finnhub.ts`](./lib/finnhub.ts) -- `fetchBasicFinancials`, `fetchCompanyNews`, `fetchRecommendationTrends`, `fetchStockDetail` | Done |
 
-**Still to do (later phases):** `/api/insight` streaming, bundle analyzer.
+**Phase 3 complete**
+
+| Item | Path / version | Status |
+|------|----------------|--------|
+| AI insight API | [`app/api/insight/route.ts`](./app/api/insight/route.ts) -- POST, Zod, OpenAI streaming, ReadableStream, cache | Done |
+| Insight cache | [`lib/insight-cache.ts`](./lib/insight-cache.ts) -- in-memory Map, 1h TTL | Done |
+| Insight hook | [`hooks/useInsight.ts`](./hooks/useInsight.ts) -- streaming consumer, client cache, error isolation | Done |
+| Insight modal | [`components/InsightModal.tsx`](./components/InsightModal.tsx) -- portal, streaming text, accessibility | Done |
+| Dashboard AI button | [`components/StockTable.tsx`](./components/StockTable.tsx) -- sparkle icon column per row | Done |
+| Detail AI button | [`components/stock-detail/InsightButton.tsx`](./components/stock-detail/InsightButton.tsx) + [`StockDetailHeader.tsx`](./components/stock-detail/StockDetailHeader.tsx) | Done |
+
+**Still to do (later phases):** bundle analyzer.

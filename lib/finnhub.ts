@@ -113,12 +113,20 @@ export async function fetchQuote(symbol: string): Promise<FinnhubQuote> {
 
 export async function fetchStock(symbol: string): Promise<Stock | null> {
   try {
-    const [quote, profile] = await Promise.all([
+    const [quote, profile, basicFinancials] = await Promise.all([
       fetchQuote(symbol),
       fetchCachedProfile(symbol),
+      fetchBasicFinancials(symbol).catch(() => null),
     ]);
 
     if (!quote.c || !profile.name) return null;
+
+    const fiftyTwoWeekHigh = basicFinancials?.metric["52WeekHigh"];
+    const fiftyTwoWeekLow = basicFinancials?.metric["52WeekLow"];
+    const priceVs52wHigh =
+      fiftyTwoWeekHigh && fiftyTwoWeekHigh > 0
+        ? ((quote.c - fiftyTwoWeekHigh) / fiftyTwoWeekHigh) * 100
+        : null;
 
     return {
       symbol,
@@ -132,6 +140,10 @@ export async function fetchStock(symbol: string): Promise<Stock | null> {
       lowToday: quote.l,
       openPrice: quote.o,
       marketCap: profile.marketCapitalization,
+      fiftyTwoWeekHigh: fiftyTwoWeekHigh ?? null,
+      fiftyTwoWeekLow: fiftyTwoWeekLow ?? null,
+      priceVs52wHigh:
+        priceVs52wHigh !== null ? Number(priceVs52wHigh.toFixed(2)) : null,
     };
   } catch (error) {
     console.error(`Failed to fetch stock data for ${symbol}:`, error);
@@ -321,6 +333,9 @@ export async function fetchStockDetail(
       weburl: profile.weburl,
       country: profile.country,
       shareOutstanding: profile.shareOutstanding,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
+      priceVs52wHigh: null,
     };
   } catch (error) {
     console.error(`Failed to fetch stock detail for ${symbol}:`, error);

@@ -59,7 +59,7 @@ Aligned with the technical brief:
 - [x] Suspense + skeleton UI for data-loading routes
 - [x] **≥3** URL-driven, debounced filters with analyst-relevant metrics
 - [x] Stock **detail** with shareable URL (`/stock/[symbol]`); rendering strategy documented in [DECISIONS.md](./DECISIONS.md)
-- [ ] **`/api/insight`**: streaming tokens (`ReadableStream`), cached insights, graceful failure
+- [x] **`/api/insight`**: streaming tokens (`ReadableStream`), cached insights, graceful failure
 - [ ] Explicit **`'use cache'`** only where caching is intentional (no implicit caching assumptions)
 
 Check items off as you implement. Log decisions in [DECISIONS_LOG.md](./DECISIONS_LOG.md) as you go; roll important points into [DECISIONS.md](./DECISIONS.md) when they stabilize.

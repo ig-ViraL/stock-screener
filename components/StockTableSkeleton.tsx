@@ -20,6 +20,9 @@ export function StockTableSkeleton() {
             <th className="px-4 py-3 text-right">Change</th>
             <th className="px-4 py-3 text-right">% Change</th>
             <th className="px-4 py-3 text-right">Market Cap</th>
+            <th className="px-4 py-3 text-right">52W High</th>
+            <th className="px-4 py-3 text-right">vs 52W High</th>
+            <th className="w-12 px-2 py-3" />
           </tr>
         </thead>
         <tbody>
@@ -45,6 +48,15 @@ export function StockTableSkeleton() {
               </td>
               <td className="px-4 py-3 text-right">
                 <Pulse className="ml-auto h-4 w-20" />
+              </td>
+              <td className="px-4 py-3 text-right">
+                <Pulse className="ml-auto h-4 w-16" />
+              </td>
+              <td className="px-4 py-3 text-right">
+                <Pulse className="ml-auto h-4 w-14" />
+              </td>
+              <td className="px-2 py-3">
+                <Pulse className="mx-auto h-5 w-5 rounded" />
               </td>
             </tr>
           ))}

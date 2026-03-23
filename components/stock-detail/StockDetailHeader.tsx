@@ -1,4 +1,5 @@
 import { DayRangeBar } from "./DayRangeBar";
+import { InsightButton } from "./InsightButton";
 import {
   formatPrice,
   formatChange,
@@ -24,11 +25,38 @@ export function StockDetailHeader({
     ? "bg-emerald-50 dark:bg-emerald-950/40"
     : "bg-red-50 dark:bg-red-950/40";
 
-  const week52High = metrics?.metric["52WeekHigh"];
-  const week52Low = metrics?.metric["52WeekLow"];
+  const m = metrics?.metric;
+  const insightData = {
+    symbol: stock.symbol,
+    name: stock.name,
+    price: stock.price,
+    change: stock.change,
+    percentChange: stock.percentChange,
+    marketCap: stock.marketCap,
+    industry: stock.industry,
+    metrics: m
+      ? {
+          peRatio: m.peBasicExclExtraTTM as number | undefined,
+          eps: m.epsBasicExclExtraItemsTTM as number | undefined,
+          beta: m.beta as number | undefined,
+          dividendYield: m.dividendYieldIndicatedAnnual as number | undefined,
+          roe: m.roeTTM as number | undefined,
+          debtToEquity: m.totalDebtToEquityQuarterly as number | undefined,
+        }
+      : undefined,
+  };
+
+  const week52High = m?.["52WeekHigh"];
+  const week52Low = m?.["52WeekLow"];
+  const stats = [
+    { label: "Open", value: formatPrice(stock.openPrice) },
+    { label: "Prev Close", value: formatPrice(stock.previousClose) },
+    { label: "Mkt Cap", value: formatMarketCap(stock.marketCap) },
+    { label: "Currency", value: stock.currency },
+  ];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-4">
           {stock.logo && (
@@ -55,6 +83,7 @@ export function StockDetailHeader({
           </div>
         </div>
 
+        <InsightButton stock={insightData} />
       </div>
 
       <div className="flex flex-wrap items-baseline gap-3">
@@ -68,34 +97,23 @@ export function StockDetailHeader({
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-sm sm:grid-cols-4">
-        <div>
-          <span className="text-zinc-500 dark:text-zinc-400">Open</span>
-          <span className="ml-2 tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
-            {formatPrice(stock.openPrice)}
-          </span>
-        </div>
-        <div>
-          <span className="text-zinc-500 dark:text-zinc-400">Prev Close</span>
-          <span className="ml-2 tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
-            {formatPrice(stock.previousClose)}
-          </span>
-        </div>
-        <div>
-          <span className="text-zinc-500 dark:text-zinc-400">Mkt Cap</span>
-          <span className="ml-2 tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
-            {formatMarketCap(stock.marketCap)}
-          </span>
-        </div>
-        <div>
-          <span className="text-zinc-500 dark:text-zinc-400">Currency</span>
-          <span className="ml-2 font-medium text-zinc-900 dark:text-zinc-100">
-            {stock.currency}
-          </span>
-        </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {stats.map((stat) => (
+          <div
+            key={stat.label}
+            className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/60"
+          >
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              {stat.label}
+            </p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+              {stat.value}
+            </p>
+          </div>
+        ))}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2">
         <DayRangeBar
           low={stock.lowToday}
           high={stock.highToday}
