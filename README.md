@@ -1,6 +1,6 @@
 # Stock Screener
 
-A web-based **real-time stock screener** for analysts: live Finnhub-backed quotes via WebSocket, URL-driven filters, a shareable stock detail view, and streaming AI insights. Built for a **Next.js 16** (App Router) full-stack assignment.
+A web-based **real-time stock screener** for analysts: live Finnhub-backed quotes via WebSocket, URL-driven filters, a shareable stock detail view, and streaming AI insights.
 
 **Documentation set (keep these in sync as you develop):**
 
@@ -29,10 +29,10 @@ Create a `.env.local` in the project root (never commit secrets). Example:
 |----------|----------|----------------|-------------|
 | `FINNHUB_API_KEY` | Yes | Server only | REST API calls to Finnhub from route handlers |
 | `NEXT_PUBLIC_FINNHUB_API_KEY` | Yes | Client (browser) | WebSocket token for main screener live prices |
-| `OPENAI_API_KEY` | If using OpenAI | Server only | LLM for streaming stock insights (later phase) |
-| `ANTHROPIC_API_KEY` | If using Anthropic | Server only | Alternative LLM for insights (later phase) |
+| `OPENAI_API_KEY` | If using OpenAI | Server only | LLM for streaming stock insights |
+| `ANTHROPIC_API_KEY` | If using Anthropic | Server only | Alternative LLM for insights |
 
-`NEXT_PUBLIC_FINNHUB_API_KEY` is exposed to the browser for the main screener WebSocket. Finnhub free-tier keys are commonly treated as non-secret for client WS in demos; document the trade-off for production.
+`NEXT_PUBLIC_FINNHUB_API_KEY` is exposed to the browser for the main screener WebSocket. Finnhub free-tier keys are commonly treated as non-secret for client WS in demos.
 
 ## Setup and scripts
 
@@ -45,36 +45,16 @@ npm run dev
 - **Production build:** `npm run build` then `npm start`
 - **Lint:** `npm run lint`
 
-Optional (assignment deliverable): add `@next/bundle-analyzer` and run `ANALYZE=true npm run build` for bundle analysis; capture a screenshot for submission.
-
-## Feature checklist (assignment scope)
-
-Aligned with the technical brief:
-
-- [x] Next.js 16 App Router, TypeScript, Tailwind (no UI kit)
-- [x] React Compiler enabled in `next.config.ts`
-- [x] Request interception + **30 req/min per IP** rate limit in **`proxy.ts`** (not `middleware.ts`)
-- [x] Typed Finnhub **proxy** API: normalized fields, Zod on query params, computed fields where useful
-- [x] **25** tracked symbols: ticker, name, price, % change, market cap; **WebSocket** live updates + manual refresh fallback
-- [x] Suspense + skeleton UI for data-loading routes
-- [x] **≥3** URL-driven, debounced filters with analyst-relevant metrics
-- [x] Stock **detail** with shareable URL (`/stock/[symbol]`); rendering strategy documented in [DECISIONS.md](./DECISIONS.md)
-- [x] **`/api/insight`**: streaming tokens (`ReadableStream`), cached insights, graceful failure
-- [ ] Explicit **`'use cache'`** only where caching is intentional (no implicit caching assumptions)
-
-Check items off as you implement. Log decisions in [DECISIONS_LOG.md](./DECISIONS_LOG.md) as you go; roll important points into [DECISIONS.md](./DECISIONS.md) when they stabilize.
-
 ## Project layout
 
 | Path | Purpose |
 |------|---------|
 | [`app/`](./app/) | App Router: layouts, pages, loading UI |
-| [`app/api/`](./app/api/) | Route handlers (Finnhub proxy, `/api/insight`, etc.) — add as implemented |
-| [`proxy.ts`](./proxy.ts) | Next.js 16 `proxy()` — rate limiting and request interception (add at repo root) |
+| [`app/api/`](./app/api/) | Route handlers (Finnhub proxy, `/api/insight`, etc.) |
+| [`proxy.ts`](./proxy.ts) | Next.js 16 `proxy()` — rate limiting and request interception |
 | [`next.config.ts`](./next.config.ts) | Next config, including React Compiler |
 | [`public/`](./public/) | Static assets |
-| [`DECISIONS_LOG.md`](./DECISIONS_LOG.md) | Chronological decision notes (append during development) |
-
+| [`DECISIONS_LOG.md`](./DECISIONS_LOG.md) | Chronological decision notes |
 | [`lib/`](./lib/) | Shared types, Finnhub client, symbol list, formatters |
 | [`components/`](./components/) | Client and server UI components (StockTable, skeleton, status badge) |
 | [`hooks/`](./hooks/) | React hooks (WebSocket, future filters) |
