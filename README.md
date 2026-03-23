@@ -57,7 +57,7 @@ Aligned with the technical brief:
 - [x] Typed Finnhub **proxy** API: normalized fields, Zod on query params, computed fields where useful
 - [x] **25** symbols: ticker, name, price, % change, market cap; **WebSocket** live updates + manual refresh fallback
 - [x] Suspense + skeleton UI for data-loading routes
-- [ ] **≥3** URL-driven, debounced filters with analyst-relevant metrics
+- [x] **≥3** URL-driven, debounced filters with analyst-relevant metrics
 - [ ] Stock **detail** with shareable URL; rendering strategy documented
 - [ ] **`/api/insight`**: streaming tokens (`ReadableStream`), cached insights, graceful failure
 - [ ] Explicit **`'use cache'`** only where caching is intentional (no implicit caching assumptions)

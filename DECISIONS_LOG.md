@@ -69,3 +69,18 @@ Copy the template below to the **bottom** of this file (newest last). Use ISO da
 - **Alternatives considered:** Hardcoding profile data in `lib/symbols.ts` (fast but stale and doesn't demonstrate caching); Finnhub symbol search endpoint (only returns name, no market cap, still per-symbol).
 - **Side effect:** Homepage now renders as `◐ (Partial Prerender)` — static shell prerendered, dynamic Suspense hole streams quote data. Better than fully dynamic; user sees the page shell instantly.
 
+### 2026-03-23 — URL-driven screener filters
+
+- **Context:** Assignment requires ≥3 analyst-relevant filters, all reflected in URL query params, surviving hard refresh, with debounced text/range inputs.
+- **Decision:** Three filters implemented client-side:
+  1. **Daily % Change** (min/max range) — `pctMin` / `pctMax` query params. Momentum screening: "show me stocks up >3% today" or "down >2%." Data: computed `percentChange` already on `Stock`.
+  2. **Market Cap tier** (multi-select categorical) — `cap` param, comma-separated. Tiers: Mega (>$200B), Large ($10–200B), Mid ($2–10B), Small (<$2B). Maps to real institutional fund mandates and risk profiles.
+  3. **Sector / Industry** (multi-select) — `sector` param, comma-separated. Uses `finnhubIndustry` from profile data. Sector rotation is a core analyst strategy.
+- **URL as state:** `useSearchParams()` is the single source of truth; no parallel `useState` for filter values. `router.replace()` (not `push`) avoids polluting browser history. Example: `/?pctMin=-2&cap=mega,large&sector=Technology`.
+- **Debouncing:** Only numeric inputs (% change min/max) are debounced (300ms via `useRef` + `setTimeout`). Toggle buttons (cap tier, sector pills) update the URL immediately since there is no intermediate typing state.
+- **Validation:** Zod schema in `lib/filters.ts` parses URL params with safe fallbacks — invalid or missing params silently default to "no constraint" rather than crashing.
+- **Data model change:** Added `industry: string` to the `Stock` interface; `fetchStock()` now passes through `profile.finnhubIndustry`.
+- **Why client-side filtering:** All 25 stocks are already loaded in memory. Server-side filtering would add a round-trip for zero benefit. Pure `Array.filter()` is instant.
+- **Alternatives considered:** Price range filter (rejected — "arbitrary number range" per assignment guidance; not analytically meaningful without position context); P/E ratio (rejected — requires additional Finnhub API calls to basic financials endpoint, adding latency and rate-limit pressure for 25 more calls); volume filter (rejected — not in current `Stock` data without additional API calls or aggregating WebSocket tick volumes).
+- **Follow-up:** Update DECISIONS.md section 4 with final implementation; check README feature checklist.
+

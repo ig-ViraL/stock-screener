@@ -50,17 +50,27 @@ Next.js 16 deprecates **`middleware.ts`** for the kind of network interception w
 
 **Requirement:** At least **three** filters that an analyst would actually use, with **financial** justification—not arbitrary min/max fields.
 
-**Planned trio (concrete defaults subject to final data availability from Finnhub):**
+**Implemented trio:**
 
-1. **Daily % change** (min / max) — Captures momentum vs. mean reversion; uses computed \((c - pc) / pc\) consistent with the brief.
-2. **Market capitalization** (min / max or bands) — Separates large-cap from small-cap context; liquidity and risk profiles differ materially.
-3. **P/E ratio** (min / max) or **volume** (min) — P/E for valuation context; if P/E is noisy or missing for some names, volume confirms whether a move is liquid and meaningful.
+1. **Daily % change** (min / max) — Momentum screening. `pctMin` and `pctMax` query params. "Show me stocks up >3%" catches breakout candidates; "down >2%" catches mean-reversion plays. Uses the already-computed `percentChange` field on `Stock`.
+2. **Market capitalization** (categorical tiers) — `cap` query param, comma-separated tier names. Four tiers matching institutional fund mandates: Mega (>$200B), Large ($10–200B), Mid ($2–10B), Small (<$2B). UI is toggle buttons rather than range sliders because these are categorical buckets, not continuous ranges.
+3. **Sector / Industry** (multi-select) — `sector` query param, comma-separated. Uses `finnhubIndustry` from the profile data we already fetch and cache. Sector rotation is a core analyst strategy; filtering by sector lets analysts focus on specific macro exposures.
 
-**URL as state:** All active filters are reflected in **query parameters** so a filtered view is **shareable** and **restores after a hard refresh**. Implementation uses **`useSearchParams`** (or equivalent) and keeps the URL the single source of truth for filter state—not parallel `useState` that diverges.
+**Why not P/E or volume?** P/E requires an additional Finnhub endpoint (`/stock/metric`) per symbol—25 more API calls on a 60/min rate limit. Volume would require aggregating WebSocket tick data or another API call. Both were rejected in favor of industry/sector, which is already available from the cached profile data at zero additional API cost.
 
-**Debouncing:** Text fields and range inputs **debounce** before updating the URL / recomputing the filtered set so we do not filter on every keystroke.
+**URL as state:** All active filters are reflected in **query parameters** so a filtered view is **shareable** and **restores after a hard refresh**. Example: `/?pctMin=-2&cap=mega,large&sector=Technology`. Implementation uses **`useSearchParams`** as the single source of truth—no parallel `useState` that could diverge. URL updates use **`router.replace()`** (not `push`) so filter toggles don't pollute browser history.
 
-**Invalid params:** Zod (or equivalent) validation on parse; safe fallbacks or ignored keys with no crash.
+**Debouncing:** Only the % change text inputs debounce (300ms via `useRef` + `setTimeout`). Toggle buttons (cap tier, sector) update immediately since there is no intermediate typing state.
+
+**Validation:** Zod schema in `lib/filters.ts` parses URL params with safe fallbacks. Invalid or absent params silently default to "no constraint"—the app never crashes on a malformed URL.
+
+**Client-side only:** All 25 stocks are loaded at once; filtering is a pure `Array.filter()` call. Server-side filtering would add a round-trip for no benefit.
+
+| File | Role |
+|------|------|
+| [`lib/filters.ts`](./lib/filters.ts) | Types, Zod schema, `applyFilters()`, `getCapTier()` |
+| [`hooks/useStockFilters.ts`](./hooks/useStockFilters.ts) | URL ↔ filter state bridge, debounce, `clearFilters` |
+| [`components/FilterBar.tsx`](./components/FilterBar.tsx) | UI: number inputs, cap-tier toggles, sector pills, clear button |
 
 ---
 
@@ -143,4 +153,7 @@ Examples of defensible **non-goals** for a 4–5 hour slice:
 | Shared lib | [`lib/types.ts`](./lib/types.ts), [`lib/symbols.ts`](./lib/symbols.ts), [`lib/finnhub.ts`](./lib/finnhub.ts), [`lib/format.ts`](./lib/format.ts) | Done |
 | Dependencies | Next **16.2.1**, React **19.2.4**, Tailwind **4**, **zod**, **babel-plugin-react-compiler** | Done |
 
-**Still to do (later phases):** URL-driven filters, stock detail route, `/api/insight` streaming, `'use cache'` on profile data, bundle analyzer.
+| URL-driven filters | [`lib/filters.ts`](./lib/filters.ts), [`hooks/useStockFilters.ts`](./hooks/useStockFilters.ts), [`components/FilterBar.tsx`](./components/FilterBar.tsx) | Done |
+| Industry in Stock | [`lib/types.ts`](./lib/types.ts), [`lib/finnhub.ts`](./lib/finnhub.ts) — `industry` field added | Done |
+
+**Still to do (later phases):** Stock detail route, `/api/insight` streaming, bundle analyzer.

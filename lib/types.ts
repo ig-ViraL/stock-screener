@@ -27,6 +27,7 @@ export interface FinnhubProfile {
 export interface Stock {
   symbol: string;
   name: string;
+  industry: string;
   price: number;
   previousClose: number;
   change: number;

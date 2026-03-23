@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { useFinnhubWebSocket } from "@/hooks/useFinnhubWebSocket";
+import { useStockFilters } from "@/hooks/useStockFilters";
 import { ConnectionStatusBadge } from "@/components/ConnectionStatus";
+import { FilterBar } from "@/components/FilterBar";
 import {
   formatPrice,
   formatChange,
   formatPercent,
   formatMarketCap,
 } from "@/lib/format";
+import { applyFilters } from "@/lib/filters";
 import type { Stock } from "@/lib/types";
 
 const FLASH_DURATION_MS = 2_000;
@@ -25,6 +28,22 @@ export function StockTable({ initialStocks }: StockTableProps) {
   const flashTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map()
   );
+
+  const {
+    filters,
+    activeFilterCount,
+    setNumericFilter,
+    toggleCapTier,
+    toggleSector,
+    clearFilters,
+  } = useStockFilters();
+
+  const sectors = useMemo(() => {
+    const set = new Set(stocks.map((s) => s.industry).filter(Boolean));
+    return [...set].sort();
+  }, [stocks]);
+
+  const filteredStocks = applyFilters(stocks, filters);
 
   const flashRows = useCallback((symbols: Iterable<string>) => {
     setFlashedSymbols((prev) => {
@@ -106,11 +125,27 @@ export function StockTable({ initialStocks }: StockTableProps) {
         </button>
       </div>
 
+      <div className="mb-4 shrink-0">
+        <FilterBar
+          filters={filters}
+          activeFilterCount={activeFilterCount}
+          sectors={sectors}
+          onNumericFilter={setNumericFilter}
+          onToggleCapTier={toggleCapTier}
+          onToggleSector={toggleSector}
+          onClear={clearFilters}
+        />
+      </div>
+
       {refreshError && (
         <div className="mb-4 shrink-0 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
           {refreshError}
         </div>
       )}
+
+      <div className="mb-2 shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
+        Showing {filteredStocks.length} of {stocks.length} stocks
+      </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table className="w-full text-sm">
@@ -125,7 +160,7 @@ export function StockTable({ initialStocks }: StockTableProps) {
             </tr>
           </thead>
           <tbody>
-            {stocks.map((stock) => {
+            {filteredStocks.map((stock) => {
               const isPositive = stock.change >= 0;
               const changeColor = isPositive
                 ? "text-emerald-600 dark:text-emerald-400"
@@ -163,13 +198,24 @@ export function StockTable({ initialStocks }: StockTableProps) {
                 </tr>
               );
             })}
-            {stocks.length === 0 && (
+            {filteredStocks.length === 0 && (
               <tr>
                 <td
                   colSpan={6}
-                  className="px-4 py-8 text-center text-zinc-400"
+                  className="px-4 py-12 text-center"
                 >
-                  No stock data available.
+                  <p className="text-zinc-500 dark:text-zinc-400">
+                    No stocks match your filters.
+                  </p>
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                    >
+                      Clear all filters
+                    </button>
+                  )}
                 </td>
               </tr>
             )}

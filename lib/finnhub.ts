@@ -79,6 +79,7 @@ export async function fetchStock(symbol: string): Promise<Stock | null> {
     return {
       symbol,
       name: profile.name,
+      industry: profile.finnhubIndustry,
       price: quote.c,
       previousClose: quote.pc,
       change: quote.d,
