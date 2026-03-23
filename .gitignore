@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# local build/cache artifacts
+/.cache/
+
 # production
 /build
 

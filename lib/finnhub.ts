@@ -15,8 +15,14 @@ import type {
 const FINNHUB_BASE = "https://finnhub.io/api/v1";
 
 function getApiKey(): string {
-  const key = process.env.FINNHUB_API_KEY;
-  if (!key) throw new Error("FINNHUB_API_KEY environment variable is not set");
+  // Prefer server-only env var; fall back to NEXT_PUBLIC for dev setups where
+  // only the browser key is configured.
+  const key = process.env.FINNHUB_API_KEY ?? process.env.NEXT_PUBLIC_FINNHUB_API_KEY;
+  if (!key) {
+    throw new Error(
+      "Finnhub API key missing. Set FINNHUB_API_KEY (preferred) or NEXT_PUBLIC_FINNHUB_API_KEY."
+    );
+  }
   return key;
 }
 
