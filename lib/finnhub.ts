@@ -160,12 +160,14 @@ export async function fetchStock(symbol: string): Promise<Stock | null> {
 export async function fetchAllStocks(
   symbols: readonly string[]
 ): Promise<Stock[]> {
-  const CONCURRENCY = 6;
+  const CONCURRENCY = 3;
   const stocks: Stock[] = [];
 
   for (let index = 0; index < symbols.length; index += CONCURRENCY) {
     const batch = symbols.slice(index, index + CONCURRENCY);
-    const batchResults = await Promise.allSettled(batch.map((s) => fetchStock(s)));
+    const batchResults = await Promise.allSettled(
+      batch.map((s) => fetchStock(s))
+    );
 
     for (const result of batchResults) {
       if (result.status === "fulfilled" && result.value) {

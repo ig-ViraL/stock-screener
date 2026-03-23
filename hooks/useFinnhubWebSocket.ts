@@ -37,12 +37,20 @@ export function useFinnhubWebSocket({
   );
   const isMountedRef = useRef(false);
   const shouldReconnectRef = useRef(true);
+  const subscribedSymbolsRef = useRef<Set<string>>(new Set());
+  const connectRef = useRef<(() => void) | null>(null);
 
 
   const symbolsRef = useRef(symbols);
-  symbolsRef.current = symbols;
   const onPriceUpdateRef = useRef(onPriceUpdate);
-  onPriceUpdateRef.current = onPriceUpdate;
+ 
+  useEffect(() => {
+    symbolsRef.current = symbols;
+  }, [symbols]);
+
+  useEffect(() => {
+    onPriceUpdateRef.current = onPriceUpdate;
+  }, [onPriceUpdate]);
 
   const flushUpdates = useCallback(() => {
     if (pendingUpdates.current.size > 0) {
@@ -75,8 +83,10 @@ export function useFinnhubWebSocket({
       setStatus("connected");
       reconnectAttempts.current = 0;
 
+      subscribedSymbolsRef.current.clear();
       for (const symbol of symbolsRef.current) {
         ws.send(JSON.stringify({ type: "subscribe", symbol }));
+        subscribedSymbolsRef.current.add(symbol);
       }
     };
 
@@ -104,6 +114,7 @@ export function useFinnhubWebSocket({
     ws.onclose = () => {
       if (wsRef.current === ws) {
         wsRef.current = null;
+        subscribedSymbolsRef.current.clear();
       }
       if (flushTimer.current) {
         clearTimeout(flushTimer.current);
@@ -125,7 +136,10 @@ export function useFinnhubWebSocket({
           RECONNECT_MAX_DELAY
         );
         reconnectAttempts.current++;
-        reconnectTimer.current = setTimeout(connect, delay);
+        reconnectTimer.current = setTimeout(
+          () => connectRef.current?.(),
+          delay
+        );
       } else {
         setStatus("disconnected");
       }
@@ -137,9 +151,28 @@ export function useFinnhubWebSocket({
   }, [enabled, flushUpdates]);
 
   useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  useEffect(() => {
+    if (!enabled || simulateWs) return;
+
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const subscribed = subscribedSymbolsRef.current;
+    for (const symbol of symbols) {
+      if (subscribed.has(symbol)) continue;
+      ws.send(JSON.stringify({ type: "subscribe", symbol }));
+      subscribed.add(symbol);
+    }
+  }, [symbols, enabled, simulateWs]);
+
+  useEffect(() => {
     if (!enabled || !simulateWs) return;
 
     // Simulation mode: mimic a live feed so the dashboard updates visually.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatus("connected");
 
     const lastPrices = new Map<string, number>();
@@ -193,8 +226,11 @@ export function useFinnhubWebSocket({
     shouldReconnectRef.current = true;
 
     if (enabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (!simulateWs) connect();
-      else setStatus("connected");
+      else {
+        setStatus("connected");
+      }
     } else {
       setStatus("disconnected");
     }
