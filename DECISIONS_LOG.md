@@ -84,3 +84,17 @@ Copy the template below to the **bottom** of this file (newest last). Use ISO da
 - **Alternatives considered:** Price range filter (rejected — "arbitrary number range" per assignment guidance; not analytically meaningful without position context); P/E ratio (rejected — requires additional Finnhub API calls to basic financials endpoint, adding latency and rate-limit pressure for 25 more calls); volume filter (rejected — not in current `Stock` data without additional API calls or aggregating WebSocket tick volumes).
 - **Follow-up:** Update DECISIONS.md section 4 with final implementation; check README feature checklist.
 
+### 2026-03-23 — Market status & holiday indicators
+
+- **Context:** Finnhub offers two free-tier endpoints — `/stock/market-status` (exchange session state: pre-market, regular, post-market, closed) and `/stock/market-holiday` (full calendar of upcoming exchange holidays including early-close days). Displaying this in the dashboard gives analysts immediate context about when the exchange is active.
+- **Decision:** Added a header-level popover (`MarketStatusIndicator`) that shows:
+  1. **Badge** — color-coded pill indicating current session (green pulsing dot = regular trading, amber = pre/post-market, grey = closed).
+  2. **Popover** — click to expand with exchange, timezone, session, and the next 5 upcoming holidays with days-until countdown. Early-close days show trading hours.
+- **Data strategy:**
+  - **Market status** (`fetchMarketStatus`): 30-second in-memory TTL cache (same pattern as quote cache) since session transitions happen a few times per day. Client re-polls every 60s via `/api/market` route.
+  - **Market holidays** (`fetchMarketHolidays`): `'use cache'` + `cacheLife('days')` since the exchange holiday calendar rarely changes. One Finnhub call cached across all visitors.
+  - Both are fetched server-side in a `Suspense` boundary for initial SSR; the client component gracefully falls back to polling if the server-side fetch fails.
+- **API cost:** 2 additional Finnhub calls on cold start (status + holidays), then holidays are cached for days and status is cached for 30s. Well within the 60/min rate limit.
+- **Why a popover (not inline):** The information is contextual — analysts glance at the badge to confirm the market is open, then drill into the popover for details. Keeps the header clean while still surfacing holiday awareness (early closes catch people off guard).
+- **Alternatives considered:** Toast/banner on market close (dismissed by users, not persistent); separate `/market` route (over-engineering for informational data); WebSocket-based status updates (no Finnhub WS endpoint for this).
+

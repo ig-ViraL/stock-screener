@@ -50,3 +50,31 @@ export type ConnectionStatus =
   | "connecting"
   | "reconnecting"
   | "disconnected";
+
+export type MarketSession = "pre-market" | "regular" | "post-market" | null;
+
+export interface MarketStatus {
+  exchange: string;
+  holiday: string | null;
+  isOpen: boolean;
+  session: MarketSession;
+  timezone: string;
+  t: number;
+}
+
+export interface MarketHoliday {
+  eventName: string;
+  atDate: string;
+  tradingHour: string;
+}
+
+export interface MarketHolidayResponse {
+  data: MarketHoliday[];
+  exchange: string;
+  timezone: string;
+}
+
+export interface MarketInfo {
+  status: MarketStatus;
+  holidays: MarketHoliday[];
+}

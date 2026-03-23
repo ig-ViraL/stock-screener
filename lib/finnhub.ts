@@ -1,5 +1,12 @@
 import { cacheLife } from "next/cache";
-import type { FinnhubQuote, FinnhubProfile, Stock } from "./types";
+import type {
+  FinnhubQuote,
+  FinnhubProfile,
+  Stock,
+  MarketStatus,
+  MarketHoliday,
+  MarketHolidayResponse,
+} from "./types";
 
 const FINNHUB_BASE = "https://finnhub.io/api/v1";
 
@@ -107,4 +114,52 @@ export async function fetchAllStocks(
     )
     .map((r) => r.value)
     .filter((s): s is Stock => s !== null);
+}
+
+// ---------------------------------------------------------------------------
+// Market Status — 30s in-memory cache (changes throughout the trading day)
+// ---------------------------------------------------------------------------
+
+const STATUS_TTL_MS = 30_000;
+
+let statusCache: { data: MarketStatus; ts: number } | null = null;
+
+export async function fetchMarketStatus(
+  exchange = "US"
+): Promise<MarketStatus> {
+  if (statusCache && Date.now() - statusCache.ts < STATUS_TTL_MS) {
+    return statusCache.data;
+  }
+
+  const res = await fetch(
+    `${FINNHUB_BASE}/stock/market-status?exchange=${encodeURIComponent(exchange)}&token=${getApiKey()}`
+  );
+  if (!res.ok) {
+    throw new Error(`Finnhub market-status request failed: ${res.status}`);
+  }
+
+  const data: MarketStatus = await res.json();
+  statusCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Market Holidays — cached with 'use cache' (holiday calendar rarely changes)
+// ---------------------------------------------------------------------------
+
+export async function fetchMarketHolidays(
+  exchange = "US"
+): Promise<MarketHoliday[]> {
+  "use cache";
+  cacheLife("days");
+
+  const res = await fetch(
+    `${FINNHUB_BASE}/stock/market-holiday?exchange=${encodeURIComponent(exchange)}&token=${getApiKey()}`
+  );
+  if (!res.ok) {
+    throw new Error(`Finnhub market-holiday request failed: ${res.status}`);
+  }
+
+  const body: MarketHolidayResponse = await res.json();
+  return body.data;
 }
