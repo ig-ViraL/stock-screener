@@ -314,7 +314,16 @@ Examples of defensible **non-goals** for a 4-5 hour slice:
 
 **Decision:** Enable the **React Compiler** in `next.config.ts` so automatic memoization reduces the need for manual `React.memo` / `useMemo`.
 
-**Exception policy:** If manual memoization is added, include a **short inline comment** explaining why the compiler is insufficient for that case.
+**Why we still use `useMemo` / `useCallback` in selected places:**
+
+We use them only in hot paths where function/derived-value identity is part of behavior, not just micro-optimization.
+
+- **Stable callbacks for effect dependencies:** In `components/StockTable.tsx`, functions like `handlePriceUpdate`, `fetchStocksCoreWithRetries`, and merge helpers are referenced by `useEffect` hooks that drive incremental loading and retries. `useCallback` keeps these references stable so effects do not restart unnecessarily.
+- **WebSocket integration safety:** The real-time path (`useFinnhubWebSocket`) receives callback props from `StockTable`. Stable callback identity avoids unnecessary resubscription/re-initialization patterns and reduces churn during live updates.
+- **Derived lookup structures:** `symbolIndex` in `StockTable` is built with `useMemo` because it is used repeatedly during symbol merge/sort operations. Recomputing this map on every render would add avoidable work in a frequently updating component.
+- **Predictable debounce/timer behavior:** Some batching/retry utilities depend on stable function references across renders; `useCallback` prevents accidental timer invalidation patterns.
+
+In short: React Compiler is the default optimization layer, and manual hooks are used narrowly where identity stability directly affects correctness or real-time rendering behavior.
 
 ---
 
@@ -334,7 +343,6 @@ Examples of defensible **non-goals** for a 4-5 hour slice:
 | React Compiler | [`next.config.ts`](./next.config.ts) -- `reactCompiler: true` | Done |
 | Shared lib | [`lib/types.ts`](./lib/types.ts), [`lib/finnhub.ts`](./lib/finnhub.ts), [`lib/format.ts`](./lib/format.ts) | Done |
 | Dependencies | Next **16.2.1**, React **19.2.4**, Tailwind **4**, **zod**, **babel-plugin-react-compiler** | Done |
-
 | URL-driven filters | [`lib/filters.ts`](./lib/filters.ts), [`hooks/useStockFilters.ts`](./hooks/useStockFilters.ts), [`components/FilterBar.tsx`](./components/FilterBar.tsx) | Done |
 | Industry in Stock | [`lib/types.ts`](./lib/types.ts), [`lib/finnhub.ts`](./lib/finnhub.ts) -- `industry` field added | Done |
 
@@ -362,5 +370,3 @@ Examples of defensible **non-goals** for a 4-5 hour slice:
 | Insight modal | [`components/InsightModal.tsx`](./components/InsightModal.tsx) -- portal, streaming text, accessibility | Done |
 | Dashboard AI button | [`components/StockTable.tsx`](./components/StockTable.tsx) -- sparkle icon column per row | Done |
 | Detail AI button | [`components/stock-detail/InsightButton.tsx`](./components/stock-detail/InsightButton.tsx) + [`StockDetailHeader.tsx`](./components/stock-detail/StockDetailHeader.tsx) | Done |
-
-**Still to do (later phases):** bundle analyzer.
