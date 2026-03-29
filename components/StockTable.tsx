@@ -37,6 +37,12 @@ export function StockTable({ initialStocks }: StockTableProps) {
     new Map()
   );
   const isBatchLoadingRef = useRef(false);
+  // Capture loaded symbols at mount only. Using a ref prevents the batch-load
+  // effect from re-running when the parent RSC re-renders (e.g. on filter URL
+  // changes) and passes a new initialStocks array reference with the same data.
+  const initialLoadedSymbolsRef = useRef(
+    new Set(initialStocks.map((s) => s.symbol))
+  );
   // React Compiler cannot statically prove Map construction is side-effect-free
   // across module boundaries; empty deps guarantees a single allocation for the
   // component lifetime regardless of re-render frequency from WebSocket updates.
@@ -186,7 +192,7 @@ export function StockTable({ initialStocks }: StockTableProps) {
     // user see rows immediately.
     if (isBatchLoadingRef.current) return;
 
-    const loadedSymbols = new Set(initialStocks.map((s) => s.symbol));
+    const loadedSymbols = new Set(initialLoadedSymbolsRef.current);
     const remainingSymbols = STOCK_SYMBOLS.filter(
       (sym) => !loadedSymbols.has(sym)
     );
@@ -246,9 +252,9 @@ export function StockTable({ initialStocks }: StockTableProps) {
       cancelled = true;
       isBatchLoadingRef.current = false;
     };
-  }, [initialStocks, fetchStocksCoreWithRetries, mergeStocksBySymbol, sleep]);
+  }, [fetchStocksCoreWithRetries, mergeStocksBySymbol, sleep]);
 
-  const symbols = stocks.map((s) => s.symbol);
+  const symbols = useMemo(() => stocks.map((s) => s.symbol), [stocks]);
 
   const { status } = useFinnhubWebSocket({
     symbols,
