@@ -37,6 +37,9 @@ export function StockTable({ initialStocks }: StockTableProps) {
     new Map()
   );
   const isBatchLoadingRef = useRef(false);
+  // React Compiler cannot statically prove Map construction is side-effect-free
+  // across module boundaries; empty deps guarantees a single allocation for the
+  // component lifetime regardless of re-render frequency from WebSocket updates.
   const symbolIndex = useMemo(() => {
     const m = new Map<string, number>();
     STOCK_SYMBOLS.forEach((s, i) => m.set(s, i));
@@ -52,6 +55,10 @@ export function StockTable({ initialStocks }: StockTableProps) {
     clearFilters,
   } = useStockFilters();
 
+  // Deriving unique sorted sectors on every render would rebuild the Set and
+  // sort on each WebSocket price tick. The Compiler optimises pure renders but
+  // not arbitrary array→Set→sort derivations; memoising on stocks reference
+  // change keeps FilterBar stable during high-frequency price updates.
   const sectors = useMemo(() => {
     const set = new Set(stocks.map((s) => s.industry).filter(Boolean));
     return [...set].sort();

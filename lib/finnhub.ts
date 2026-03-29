@@ -30,54 +30,22 @@ function getApiKey(): string {
 // Profile — cached with 'use cache' (company name, market cap rarely change)
 // ---------------------------------------------------------------------------
 
-const PROFILE_TTL_MS = 24 * 60 * 60_000;
-
-interface CachedProfile {
-  data: FinnhubProfile;
-  ts: number;
-}
-
-const profileCache = new Map<string, CachedProfile>();
-const inflightProfileRequests = new Map<string, Promise<FinnhubProfile>>();
-
 export async function fetchCachedProfile(
   symbol: string
 ): Promise<FinnhubProfile> {
+  "use cache";
+  cacheLife("days");
+
   const normalizedSymbol = symbol.toUpperCase();
-  const cached = profileCache.get(normalizedSymbol);
-  if (cached && Date.now() - cached.ts < PROFILE_TTL_MS) {
-    return cached.data;
-  }
-
-  const inflight = inflightProfileRequests.get(normalizedSymbol);
-  if (inflight) {
-    return inflight;
-  }
-
-  const request = (async () => {
-    "use cache";
-    cacheLife("days");
-
-    const res = await fetch(
-      `${FINNHUB_BASE}/stock/profile2?symbol=${encodeURIComponent(normalizedSymbol)}&token=${getApiKey()}`
+  const res = await fetch(
+    `${FINNHUB_BASE}/stock/profile2?symbol=${encodeURIComponent(normalizedSymbol)}&token=${getApiKey()}`
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Finnhub profile request failed for ${normalizedSymbol}: ${res.status}`
     );
-    if (!res.ok) {
-      throw new Error(
-        `Finnhub profile request failed for ${normalizedSymbol}: ${res.status}`
-      );
-    }
-
-    const data: FinnhubProfile = await res.json();
-    profileCache.set(normalizedSymbol, { data, ts: Date.now() });
-    return data;
-  })();
-
-  inflightProfileRequests.set(normalizedSymbol, request);
-  try {
-    return await request;
-  } finally {
-    inflightProfileRequests.delete(normalizedSymbol);
   }
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------
