@@ -53,6 +53,9 @@ export async function fetchCachedProfile(
 // ---------------------------------------------------------------------------
 
 export async function fetchQuote(symbol: string): Promise<FinnhubQuote> {
+  "use cache";
+  cacheLife({ revalidate: 55, stale: 55, expire: 60 });
+
   const res = await fetch(
     `${FINNHUB_BASE}/quote?symbol=${encodeURIComponent(symbol)}&token=${getApiKey()}`
   );

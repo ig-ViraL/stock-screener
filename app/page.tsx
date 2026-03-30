@@ -13,8 +13,6 @@ import { STOCK_SYMBOLS } from "@/lib/symbols";
 import type { MarketInfo } from "@/lib/types";
 
 async function StockData() {
-  "use cache";
-  cacheLife({ revalidate: 55, stale: 55, expire: 60 });
   const stocks = await fetchAllStocks(STOCK_SYMBOLS);
   return <StockTable initialStocks={stocks} />;
 }
