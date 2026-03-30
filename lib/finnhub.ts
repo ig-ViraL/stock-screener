@@ -55,7 +55,7 @@ export async function fetchCachedProfile(
 
 export async function fetchQuote(symbol: string): Promise<FinnhubQuote> {
   "use cache";
-  cacheLife({ revalidate: 55, stale: 55, expire: 60 });
+  cacheLife("minutes");
   cacheTag(`quote-${symbol.toUpperCase()}`, `stock-${symbol.toUpperCase()}`);
 
   const res = await fetch(
@@ -142,6 +142,10 @@ export async function fetchAllStocks(
 export async function fetchMarketStatus(
   exchange = "US"
 ): Promise<MarketStatus> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag(`market-status-${exchange}`);
+
   const res = await fetch(
     `${FINNHUB_BASE}/stock/market-status?exchange=${encodeURIComponent(exchange)}&token=${getApiKey()}`
   );
