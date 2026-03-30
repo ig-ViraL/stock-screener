@@ -49,24 +49,10 @@ export async function fetchCachedProfile(
 }
 
 // ---------------------------------------------------------------------------
-// Quote — short-lived in-memory cache (30s) to absorb rapid refreshes
+// Quote — always fresh (ISR at page level provides the caching boundary)
 // ---------------------------------------------------------------------------
 
-const QUOTE_TTL_MS = 30_000;
-
-interface CachedQuote {
-  data: FinnhubQuote;
-  ts: number;
-}
-
-const quoteCache = new Map<string, CachedQuote>();
-
 export async function fetchQuote(symbol: string): Promise<FinnhubQuote> {
-  const cached = quoteCache.get(symbol);
-  if (cached && Date.now() - cached.ts < QUOTE_TTL_MS) {
-    return cached.data;
-  }
-
   const res = await fetch(
     `${FINNHUB_BASE}/quote?symbol=${encodeURIComponent(symbol)}&token=${getApiKey()}`
   );
@@ -75,10 +61,7 @@ export async function fetchQuote(symbol: string): Promise<FinnhubQuote> {
       `Finnhub quote request failed for ${symbol}: ${res.status}`
     );
   }
-
-  const data: FinnhubQuote = await res.json();
-  quoteCache.set(symbol, { data, ts: Date.now() });
-  return data;
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -148,30 +131,19 @@ export async function fetchAllStocks(
 }
 
 // ---------------------------------------------------------------------------
-// Market Status — 30s in-memory cache (changes throughout the trading day)
+// Market Status — always fresh (MarketStatusIndicator polls every 60s client-side)
 // ---------------------------------------------------------------------------
-
-const STATUS_TTL_MS = 30_000;
-
-let statusCache: { data: MarketStatus; ts: number } | null = null;
 
 export async function fetchMarketStatus(
   exchange = "US"
 ): Promise<MarketStatus> {
-  if (statusCache && Date.now() - statusCache.ts < STATUS_TTL_MS) {
-    return statusCache.data;
-  }
-
   const res = await fetch(
     `${FINNHUB_BASE}/stock/market-status?exchange=${encodeURIComponent(exchange)}&token=${getApiKey()}`
   );
   if (!res.ok) {
     throw new Error(`Finnhub market-status request failed: ${res.status}`);
   }
-
-  const data: MarketStatus = await res.json();
-  statusCache = { data, ts: Date.now() };
-  return data;
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -217,28 +189,16 @@ export async function fetchBasicFinancials(
 }
 
 // ---------------------------------------------------------------------------
-// Company News — 30-min in-memory cache
+// Company News — cached hours via 'use cache' (news changes infrequently)
 // ---------------------------------------------------------------------------
-
-const NEWS_TTL_MS = 30 * 60_000;
-
-interface CachedNews {
-  data: FinnhubNewsItem[];
-  ts: number;
-}
-
-const newsCache = new Map<string, CachedNews>();
 
 export async function fetchCompanyNews(
   symbol: string,
   from: string,
   to: string
 ): Promise<FinnhubNewsItem[]> {
-  const key = `${symbol}:${from}:${to}`;
-  const cached = newsCache.get(key);
-  if (cached && Date.now() - cached.ts < NEWS_TTL_MS) {
-    return cached.data;
-  }
+  "use cache";
+  cacheLife("hours");
 
   const res = await fetch(
     `${FINNHUB_BASE}/company-news?symbol=${encodeURIComponent(symbol)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&token=${getApiKey()}`
@@ -248,10 +208,7 @@ export async function fetchCompanyNews(
       `Finnhub company-news request failed for ${symbol}: ${res.status}`
     );
   }
-
-  const data: FinnhubNewsItem[] = await res.json();
-  newsCache.set(key, { data, ts: Date.now() });
-  return data;
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------

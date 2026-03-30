@@ -122,7 +122,7 @@ function SectorDropdown({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+        <div className="absolute left-0 top-full z-30 mt-1 w-56 overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800" style={{ maxHeight: "min(16rem, calc(100vh - 220px))" }}>
           {sectors.map((sector) => {
             const isSelected = selected.includes(sector);
             return (
