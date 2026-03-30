@@ -131,16 +131,14 @@ export function StockTable({ initialStocks }: StockTableProps) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
         <ConnectionStatusBadge status={status} />
-        {status !== "connected" && (
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={isRefreshing}
+            disabled={isRefreshing || status === "connected"}
             className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
           >
             {isRefreshing ? "Fetching…" : "Fetch Latest Prices"}
           </button>
-        )}
       </div>
 
       <div className="mb-4 shrink-0">

@@ -20,8 +20,6 @@ async function StockData() {
 }
 
 async function MarketStatusData() {
-  "use cache";
-  cacheLife({ revalidate: 55, stale: 55, expire: 60 });
   let data: MarketInfo | null = null;
   try {
     const [status, holidays] = await Promise.all([
