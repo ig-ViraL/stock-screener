@@ -1,296 +1,86 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
-import { useFinnhubWebSocket } from "@/hooks/useFinnhubWebSocket";
-import { useStockFilters } from "@/hooks/useStockFilters";
-import { ConnectionStatusBadge } from "@/components/ConnectionStatus";
-import { FilterBar } from "@/components/FilterBar";
-import {
-  formatPrice,
-  formatChange,
-  formatPercent,
-  formatNullablePercent,
-  formatMarketCap,
-} from "@/lib/format";
+import { useMemo, useEffect, useRef, useState } from "react";
 import { applyFilters } from "@/lib/filters";
-import { InsightModal } from "@/components/InsightModal";
+import { formatPrice, formatChange, formatPct, formatMarketCap } from "@/lib/format";
+import { useStockFilters } from "@/hooks/useStockFilters";
+import { useFinnhubWebSocket, type ConnectionStatus } from "@/hooks/useFinnhubWebSocket";
+import { FilterBar } from "@/components/FilterBar";
 import type { Stock } from "@/lib/types";
-import { STOCK_SYMBOLS } from "@/lib/symbols";
 
-const FLASH_DURATION_MS = 2_000;
-const BATCH_SIZE = 5;
-const INTER_BATCH_DELAY_MS = 900;
-const MAX_BATCH_ATTEMPTS = 3;
-
-interface StockTableProps {
+interface Props {
   initialStocks: Stock[];
 }
 
-export function StockTable({ initialStocks }: StockTableProps) {
-  const [stocks, setStocks] = useState<Stock[]>(initialStocks);
+export function StockTable({ initialStocks }: Props) {
+  const { filters, activeFilterCount, setNumericFilter, toggleCapTier, toggleSector, clearFilters } =
+    useStockFilters();
+
+  // Stable symbol list derived from server data
+  const symbols = useMemo(() => initialStocks.map((s) => s.symbol), [initialStocks]);
+
+  const { priceMap, status } = useFinnhubWebSocket(symbols);
+
+  // Flash animation: track which symbols had a price change in the latest flush
+  const prevPricesRef = useRef<Map<string, number>>(new Map());
   const [flashedSymbols, setFlashedSymbols] = useState<Set<string>>(new Set());
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [insightStock, setInsightStock] = useState<Stock | null>(null);
-  const flashTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
-    new Map()
-  );
-  const isBatchLoadingRef = useRef(false);
-  // React Compiler cannot statically prove Map construction is side-effect-free
-  // across module boundaries; empty deps guarantees a single allocation for the
-  // component lifetime regardless of re-render frequency from WebSocket updates.
-  const symbolIndex = useMemo(() => {
-    const m = new Map<string, number>();
-    STOCK_SYMBOLS.forEach((s, i) => m.set(s, i));
-    return m;
-  }, []);
-
-  const {
-    filters,
-    activeFilterCount,
-    setNumericFilter,
-    toggleCapTier,
-    toggleSector,
-    clearFilters,
-  } = useStockFilters();
-
-  // Deriving unique sorted sectors on every render would rebuild the Set and
-  // sort on each WebSocket price tick. The Compiler optimises pure renders but
-  // not arbitrary array→Set→sort derivations; memoising on stocks reference
-  // change keeps FilterBar stable during high-frequency price updates.
-  const sectors = useMemo(() => {
-    const set = new Set(stocks.map((s) => s.industry).filter(Boolean));
-    return [...set].sort();
-  }, [stocks]);
-
-  const filteredStocks = applyFilters(stocks, filters);
-
-  const flashRows = useCallback((symbols: Iterable<string>) => {
-    setFlashedSymbols((prev) => {
-      const next = new Set(prev);
-      for (const sym of symbols) {
-        next.add(sym);
-
-        const existing = flashTimers.current.get(sym);
-        if (existing) clearTimeout(existing);
-
-        flashTimers.current.set(
-          sym,
-          setTimeout(() => {
-            flashTimers.current.delete(sym);
-            setFlashedSymbols((s) => {
-              const n = new Set(s);
-              n.delete(sym);
-              return n;
-            });
-          }, FLASH_DURATION_MS)
-        );
-      }
-      return next;
-    });
-  }, []);
-
-  const handlePriceUpdate = useCallback(
-    (updates: Map<string, number>) => {
-      setStocks((prev) =>
-        prev.map((stock) => {
-          const newPrice = updates.get(stock.symbol);
-          if (newPrice === undefined) return stock;
-
-          const change = newPrice - stock.previousClose;
-          const percentChange = (change / stock.previousClose) * 100;
-          const priceVs52wHigh =
-            stock.fiftyTwoWeekHigh && stock.fiftyTwoWeekHigh > 0
-              ? ((newPrice - stock.fiftyTwoWeekHigh) / stock.fiftyTwoWeekHigh) *
-                100
-              : null;
-
-          return {
-            ...stock,
-            price: newPrice,
-            change,
-            percentChange,
-            priceVs52wHigh:
-              priceVs52wHigh !== null
-                ? Number(priceVs52wHigh.toFixed(2))
-                : null,
-          };
-        })
-      );
-      flashRows(updates.keys());
-    },
-    [flashRows]
-  );
-
-  const sleep = useCallback((ms: number) => {
-    return new Promise<void>((resolve) => setTimeout(resolve, ms));
-  }, []);
-
-  const mergeStocksBySymbol = useCallback(
-    (incoming: Stock[]) => {
-      if (incoming.length === 0) return;
-      setStocks((prev) => {
-        const map = new Map(prev.map((s) => [s.symbol, s]));
-        for (const stock of incoming) map.set(stock.symbol, stock);
-
-        const merged = Array.from(map.values());
-        merged.sort(
-          (a, b) => (symbolIndex.get(a.symbol) ?? 0) - (symbolIndex.get(b.symbol) ?? 0)
-        );
-        return merged;
-      });
-    },
-    [symbolIndex]
-  );
-
-  const fetchStocksCore = useCallback(async (symbols: string[]) => {
-    const qs = new URLSearchParams({ symbols: symbols.join(",") });
-
-    const res = await fetch(`/api/stocks?${qs}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const data = (await res.json()) as { stocks: Stock[] };
-    return data.stocks;
-  }, []);
-
-  const fetchStocksCoreWithRetries = useCallback(
-    async (requestedSymbols: string[]) => {
-      const resultMap = new Map<string, Stock>();
-      let pendingSymbols = requestedSymbols.slice();
-
-      for (let attempt = 0; attempt < MAX_BATCH_ATTEMPTS; attempt++) {
-        if (pendingSymbols.length === 0) break;
-
-        const batchStocks = await fetchStocksCore(pendingSymbols);
-        for (const stock of batchStocks) resultMap.set(stock.symbol, stock);
-
-        pendingSymbols = pendingSymbols.filter(
-          (sym) => !resultMap.has(sym)
-        );
-
-        if (pendingSymbols.length === 0) break;
-        await sleep(INTER_BATCH_DELAY_MS * (attempt + 1));
-      }
-
-      return requestedSymbols
-        .map((sym) => resultMap.get(sym))
-        .filter((s): s is Stock => Boolean(s));
-    },
-    [fetchStocksCore, sleep]
-  );
 
   useEffect(() => {
-    // Incrementally load the rest of the allowlisted symbols in batches of 5.
-    // This keeps Finnhub calls low enough to avoid rate limiting and lets the
-    // user see rows immediately.
-    if (isBatchLoadingRef.current) return;
+    if (priceMap.size === 0) return;
 
-    const loadedSymbols = new Set(initialStocks.map((s) => s.symbol));
-    const remainingSymbols = STOCK_SYMBOLS.filter(
-      (sym) => !loadedSymbols.has(sym)
-    );
-
-    if (remainingSymbols.length === 0) return;
-
-    let cancelled = false;
-    isBatchLoadingRef.current = true;
-
-    (async () => {
-      try {
-        for (
-          let index = 0;
-          index < remainingSymbols.length;
-          index += BATCH_SIZE
-        ) {
-          if (cancelled) return;
-          const batchSymbols = remainingSymbols.slice(index, index + BATCH_SIZE);
-          const batchStocks = await fetchStocksCoreWithRetries(batchSymbols);
-          mergeStocksBySymbol(batchStocks);
-          for (const stock of batchStocks) loadedSymbols.add(stock.symbol);
-          await sleep(INTER_BATCH_DELAY_MS);
-        }
-
-        // If we hit occasional rate limiting, retry just the missing symbols once
-        // more to try to keep the UI at >= 20 visible rows.
-        if (!cancelled && loadedSymbols.size < 20) {
-          const missingSymbols = remainingSymbols.filter(
-            (sym) => !loadedSymbols.has(sym)
-          );
-
-          for (let index = 0; index < missingSymbols.length; index += BATCH_SIZE) {
-            if (cancelled) return;
-            const batchSymbols = missingSymbols.slice(
-              index,
-              index + BATCH_SIZE
-            );
-            const batchStocks = await fetchStocksCoreWithRetries(batchSymbols);
-            mergeStocksBySymbol(batchStocks);
-            for (const stock of batchStocks) loadedSymbols.add(stock.symbol);
-            await sleep(INTER_BATCH_DELAY_MS);
-          }
-        }
-      } catch (err) {
-        console.error("[StockTable] Failed incremental load:", err);
-        if (!cancelled) {
-          setRefreshError(
-            "Failed to load all stocks (rate limited). Some may be missing."
-          );
-        }
-      } finally {
-        isBatchLoadingRef.current = false;
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      isBatchLoadingRef.current = false;
-    };
-  }, [initialStocks, fetchStocksCoreWithRetries, mergeStocksBySymbol, sleep]);
-
-  const symbols = stocks.map((s) => s.symbol);
-
-  const { status } = useFinnhubWebSocket({
-    symbols,
-    onPriceUpdate: handlePriceUpdate,
-  });
-
-  const handleRefresh = async () => {
-    if (isBatchLoadingRef.current) return;
-    setIsRefreshing(true);
-    setRefreshError(null);
-    try {
-      isBatchLoadingRef.current = true;
-      for (let i = 0; i < STOCK_SYMBOLS.length; i += BATCH_SIZE) {
-        const batchSymbols = STOCK_SYMBOLS.slice(i, i + BATCH_SIZE);
-        const batchStocks = await fetchStocksCoreWithRetries(batchSymbols);
-        mergeStocksBySymbol(batchStocks);
-        await sleep(INTER_BATCH_DELAY_MS);
-      }
-    } catch {
-      setRefreshError("Failed to fetch latest prices. Try again.");
-    } finally {
-      isBatchLoadingRef.current = false;
-      setIsRefreshing(false);
+    const changed = new Set<string>();
+    for (const [sym, price] of priceMap) {
+      if (prevPricesRef.current.get(sym) !== price) changed.add(sym);
+      prevPricesRef.current.set(sym, price);
     }
-  };
+    if (changed.size === 0) return;
+
+    setFlashedSymbols((prev) => new Set([...prev, ...changed]));
+
+    const timer = setTimeout(() => {
+      setFlashedSymbols((prev) => {
+        const next = new Set(prev);
+        for (const sym of changed) next.delete(sym);
+        return next;
+      });
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [priceMap]);
+
+  // Merge live WebSocket prices into the ISR snapshot
+  const mergedStocks = useMemo(() => {
+    if (priceMap.size === 0) return initialStocks;
+    return initialStocks.map((stock) => {
+      const livePrice = priceMap.get(stock.symbol);
+      if (!livePrice) return stock;
+      const change = livePrice - stock.previousClose;
+      const percentChange =
+        stock.previousClose > 0 ? (change / stock.previousClose) * 100 : 0;
+      const priceVs52wHigh =
+        stock.fiftyTwoWeekHigh && stock.fiftyTwoWeekHigh > 0
+          ? ((livePrice - stock.fiftyTwoWeekHigh) / stock.fiftyTwoWeekHigh) * 100
+          : null;
+      return { ...stock, price: livePrice, change, percentChange, priceVs52wHigh };
+    });
+  }, [initialStocks, priceMap]);
+
+  const sectors = useMemo(
+    () => [...new Set(initialStocks.map((s) => s.industry).filter(Boolean))].sort(),
+    [initialStocks]
+  );
+
+  const stocks = applyFilters(mergedStocks, filters);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
-        <ConnectionStatusBadge status={status} />
-
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-        >
-          {isRefreshing ? "Refreshing\u2026" : "Fetch Latest Prices"}
-        </button>
+    <div className="flex flex-col gap-3 flex-1 min-h-0">
+      {/* Connection status */}
+      <div className="shrink-0 flex items-center justify-between gap-3">
+        <WSStatusBadge status={status} />
       </div>
 
-      <div className="mb-4 shrink-0">
+      <div className="shrink-0">
         <FilterBar
           filters={filters}
           activeFilterCount={activeFilterCount}
@@ -302,20 +92,12 @@ export function StockTable({ initialStocks }: StockTableProps) {
         />
       </div>
 
-      {refreshError && (
-        <div className="mb-4 shrink-0 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
-          {refreshError}
-        </div>
-      )}
-
-      <div className="mb-2 shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
-        Showing {filteredStocks.length} of {stocks.length} stocks
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      {/* Table fills remaining height and scrolls internally */}
+      <div className="flex-1 min-h-0 overflow-hidden rounded-lg border border-zinc-800">
+        <div className="h-full overflow-y-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10">
-            <tr className="border-b border-zinc-200 bg-zinc-100 text-left text-xs font-medium uppercase tracking-wider text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+            <tr className="border-b border-zinc-800 bg-zinc-900 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">
               <th className="px-4 py-3">Symbol</th>
               <th className="px-4 py-3">Company</th>
               <th className="px-4 py-3 text-right">Price</th>
@@ -324,130 +106,127 @@ export function StockTable({ initialStocks }: StockTableProps) {
               <th className="px-4 py-3 text-right">Market Cap</th>
               <th className="px-4 py-3 text-right">52W High</th>
               <th className="px-4 py-3 text-right">vs 52W High</th>
-              <th className="w-12 px-2 py-3 text-center">
-                <span className="sr-only">AI Insight</span>
-              </th>
+              <th className="w-12 px-2 py-3" />
             </tr>
           </thead>
           <tbody>
-            {filteredStocks.map((stock) => {
-              const isPositive = stock.change >= 0;
-              const changeColor = isPositive
-                ? "text-emerald-600 dark:text-emerald-400"
-                : "text-red-600 dark:text-red-400";
-              const vs52Color =
-                stock.priceVs52wHigh === null
-                  ? "text-zinc-500 dark:text-zinc-400"
-                  : stock.priceVs52wHigh >= 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-red-600 dark:text-red-400";
-
-              const isFlashing = flashedSymbols.has(stock.symbol);
-
-              return (
-                <tr
-                  key={stock.symbol}
-                  className={`border-b border-zinc-100 transition-colors hover:bg-zinc-50 dark:border-zinc-800/50 dark:hover:bg-zinc-800/40 ${isFlashing ? "row-flash" : ""}`}
-                >
-                  <td className="px-4 py-3 font-semibold text-zinc-900 dark:text-zinc-100">
-                    <Link
-                      href={`/stock/${stock.symbol}`}
-                      className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                    >
-                      {stock.symbol}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
-                    <Link href={`/stock/${stock.symbol}`} className="hover:underline">
-                      {stock.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums font-medium text-zinc-900 dark:text-zinc-100">
-                    {formatPrice(stock.price)}
-                  </td>
-                  <td
-                    className={`px-4 py-3 text-right tabular-nums font-medium ${changeColor}`}
-                  >
-                    {formatChange(stock.change)}
-                  </td>
-                  <td
-                    className={`px-4 py-3 text-right tabular-nums font-medium ${changeColor}`}
-                  >
-                    {formatPercent(stock.percentChange)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
-                    {formatMarketCap(stock.marketCap)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
-                    {stock.fiftyTwoWeekHigh !== null
-                      ? formatPrice(stock.fiftyTwoWeekHigh)
-                      : "—"}
-                  </td>
-                  <td
-                    className={`px-4 py-3 text-right tabular-nums font-medium ${vs52Color}`}
-                  >
-                    {formatNullablePercent(stock.priceVs52wHigh)}
-                  </td>
-                  <td className="px-2 py-3 text-center">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setInsightStock(stock);
-                      }}
-                      title="AI Analysis"
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-violet-500 transition-colors hover:bg-violet-50 hover:text-violet-700 dark:text-violet-400 dark:hover:bg-violet-950/40 dark:hover:text-violet-300"
-                    >
-                      <svg
-                        className="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        strokeWidth={1.5}
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456z"
-                        />
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-            {filteredStocks.length === 0 && (
+            {stocks.length === 0 ? (
               <tr>
-                <td
-                  colSpan={9}
-                  className="px-4 py-12 text-center"
-                >
-                  <p className="text-zinc-500 dark:text-zinc-400">
-                    No stocks match your filters.
-                  </p>
-                  {activeFilterCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={clearFilters}
-                      className="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                    >
-                      Clear all filters
-                    </button>
-                  )}
+                <td colSpan={9} className="px-4 py-12 text-center text-zinc-500">
+                  No stocks match the current filters.{" "}
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="text-blue-400 underline hover:text-blue-300"
+                  >
+                    Clear filters
+                  </button>
                 </td>
               </tr>
+            ) : (
+              stocks.map((stock) => (
+                <StockRow
+                  key={stock.symbol}
+                  stock={stock}
+                  flashed={flashedSymbols.has(stock.symbol)}
+                />
+              ))
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
-      {insightStock ? (
-        <InsightModal
-          isOpen={true}
-          onClose={() => setInsightStock(null)}
-          stock={insightStock}
-        />
-      ) : null}
+      <p className="shrink-0 text-right text-xs text-zinc-600">
+        {stocks.length} of {initialStocks.length} stocks · base data refreshes every 55s
+      </p>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket status badge
+// ---------------------------------------------------------------------------
+function WSStatusBadge({ status }: { status: ConnectionStatus }) {
+  const config = {
+    connected:    { dot: "bg-emerald-500 animate-pulse", label: "Live",         color: "text-emerald-400" },
+    connecting:   { dot: "bg-amber-500 animate-pulse",   label: "Connecting…",  color: "text-amber-400"   },
+    reconnecting: { dot: "bg-amber-500 animate-pulse",   label: "Reconnecting…",color: "text-amber-400"   },
+    disconnected: { dot: "bg-red-500",                   label: "Disconnected", color: "text-red-400"     },
+  }[status];
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-medium ${config.color}`}>
+      <span className={`h-2 w-2 rounded-full ${config.dot}`} />
+      {config.label}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stock row
+// ---------------------------------------------------------------------------
+function StockRow({ stock, flashed }: { stock: Stock; flashed: boolean }) {
+  const isUp = stock.percentChange >= 0;
+  const changeColor = isUp ? "text-emerald-400" : "text-red-400";
+
+  return (
+    <tr
+      className={`border-b border-zinc-800/50 transition-colors hover:bg-zinc-900/60 ${flashed ? "row-flash" : ""}`}
+    >
+      <td className="px-4 py-3">
+        <Link
+          href={`/stock/${stock.symbol}`}
+          className="font-mono font-semibold text-zinc-100 hover:text-emerald-400"
+        >
+          {stock.symbol}
+        </Link>
+      </td>
+
+      <td className="px-4 py-3 text-zinc-400">{stock.name}</td>
+
+      <td className="px-4 py-3 text-right font-mono tabular-nums text-zinc-100">
+        {stock.price > 0 ? formatPrice(stock.price) : "—"}
+      </td>
+
+      <td className={`px-4 py-3 text-right font-mono tabular-nums ${changeColor}`}>
+        {stock.change !== 0 ? formatChange(stock.change) : "—"}
+      </td>
+
+      <td className={`px-4 py-3 text-right font-mono tabular-nums ${changeColor}`}>
+        {formatPct(stock.percentChange)}
+      </td>
+
+      <td className="px-4 py-3 text-right tabular-nums text-zinc-400">
+        {stock.marketCap > 0 ? formatMarketCap(stock.marketCap) : "—"}
+      </td>
+
+      <td className="px-4 py-3 text-right font-mono tabular-nums text-zinc-400">
+        {stock.fiftyTwoWeekHigh ? formatPrice(stock.fiftyTwoWeekHigh) : "—"}
+      </td>
+
+      <td className="px-4 py-3 text-right font-mono tabular-nums">
+        {stock.priceVs52wHigh !== null ? (
+          <span className={stock.priceVs52wHigh >= 0 ? "text-emerald-400" : "text-red-400"}>
+            {formatPct(stock.priceVs52wHigh)}
+          </span>
+        ) : (
+          <span className="text-zinc-600">—</span>
+        )}
+      </td>
+
+      <td className="px-2 py-3 text-center">
+        <button
+          type="button"
+          disabled
+          title="AI Insight (coming soon)"
+          className="rounded p-1 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-400 disabled:cursor-not-allowed"
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+          </svg>
+        </button>
+      </td>
+    </tr>
   );
 }

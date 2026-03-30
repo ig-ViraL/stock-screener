@@ -1,0 +1,103 @@
+import { fetchRecommendationTrends } from "@/lib/finnhub";
+
+interface AnalystRecommendationsProps {
+  symbol: string;
+}
+
+export async function AnalystRecommendations({
+  symbol,
+}: AnalystRecommendationsProps) {
+  const trends = await fetchRecommendationTrends(symbol);
+
+  if (!trends.length) {
+    return (
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+          Analyst Recommendations
+        </h2>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          No analyst data available for this stock.
+        </p>
+      </div>
+    );
+  }
+
+  const latest = trends[0];
+  const total =
+    latest.strongBuy + latest.buy + latest.hold + latest.sell + latest.strongSell;
+
+  if (total === 0) {
+    return (
+      <div className="space-y-3">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+          Analyst Recommendations
+        </h2>
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          No recommendations in this period.
+        </p>
+      </div>
+    );
+  }
+
+  const segments = [
+    {
+      label: "Strong Buy",
+      count: latest.strongBuy,
+      color: "bg-emerald-600",
+    },
+    { label: "Buy", count: latest.buy, color: "bg-emerald-400" },
+    { label: "Hold", count: latest.hold, color: "bg-zinc-400 dark:bg-zinc-500" },
+    { label: "Sell", count: latest.sell, color: "bg-red-400" },
+    {
+      label: "Strong Sell",
+      count: latest.strongSell,
+      color: "bg-red-600",
+    },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+          Analyst Recommendations
+        </h2>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">
+          {latest.period}
+        </span>
+      </div>
+
+      <div className="flex h-5 w-full overflow-hidden rounded-full">
+        {segments.map(
+          (seg) =>
+            seg.count > 0 && (
+              <div
+                key={seg.label}
+                className={`${seg.color} transition-all`}
+                style={{ width: `${(seg.count / total) * 100}%` }}
+                title={`${seg.label}: ${seg.count}`}
+              />
+            )
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {segments.map(
+          (seg) =>
+            seg.count > 0 && (
+              <div key={seg.label} className="flex items-center gap-1.5">
+                <span
+                  className={`inline-block h-2.5 w-2.5 rounded-full ${seg.color}`}
+                />
+                <span className="text-zinc-600 dark:text-zinc-400">
+                  {seg.label}
+                </span>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                  {seg.count}
+                </span>
+              </div>
+            )
+        )}
+      </div>
+    </div>
+  );
+}

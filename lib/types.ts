@@ -1,12 +1,16 @@
+// ---------------------------------------------------------------------------
+// Stock data
+// ---------------------------------------------------------------------------
+
 export interface FinnhubQuote {
-  c: number;
-  d: number;
-  dp: number;
-  h: number;
-  l: number;
-  o: number;
-  pc: number;
-  t: number;
+  c: number;   // current price
+  d: number;   // change
+  dp: number;  // change percent
+  h: number;   // day high
+  l: number;   // day low
+  o: number;   // open
+  pc: number;  // previous close
+  t: number;   // timestamp
 }
 
 export interface FinnhubProfile {
@@ -24,85 +28,19 @@ export interface FinnhubProfile {
   weburl: string;
 }
 
-export interface Stock {
-  symbol: string;
-  name: string;
-  industry: string;
-  price: number;
-  previousClose: number;
-  change: number;
-  percentChange: number;
-  highToday: number;
-  lowToday: number;
-  openPrice: number;
-  marketCap: number;
-  fiftyTwoWeekHigh: number | null;
-  fiftyTwoWeekLow: number | null;
-  priceVs52wHigh: number | null;
-}
-
-export interface WebSocketTrade {
-  p: number;
-  s: string;
-  t: number;
-  v: number;
-}
-
-export type ConnectionStatus =
-  | "connected"
-  | "connecting"
-  | "reconnecting"
-  | "disconnected";
-
-export type MarketSession = "pre-market" | "regular" | "post-market" | null;
-
-export interface MarketStatus {
-  exchange: string;
-  holiday: string | null;
-  isOpen: boolean;
-  session: MarketSession;
-  timezone: string;
-  t: number;
-}
-
-export interface MarketHoliday {
-  eventName: string;
-  atDate: string;
-  tradingHour: string;
-}
-
-export interface MarketHolidayResponse {
-  data: MarketHoliday[];
-  exchange: string;
-  timezone: string;
-}
-
-export interface MarketInfo {
-  status: MarketStatus;
-  holidays: MarketHoliday[];
-}
-
-// ---------------------------------------------------------------------------
-// Stock detail — Finnhub response shapes
-// ---------------------------------------------------------------------------
-
 export interface FinnhubMetrics {
   metric: {
-    "10DayAverageTradingVolume"?: number;
     "52WeekHigh"?: number;
-    "52WeekHighDate"?: string;
     "52WeekLow"?: number;
+    "52WeekHighDate"?: string;
     "52WeekLowDate"?: string;
     beta?: number;
-    dividendYieldIndicatedAnnual?: number;
-    epsBasicExclExtraItemsTTM?: number;
-    epsGrowthTTMYoy?: number;
-    netProfitMarginTTM?: number;
     peBasicExclExtraTTM?: number;
     pbAnnual?: number;
+    dividendYieldIndicatedAnnual?: number;
     roeTTM?: number;
-    revenuePerShareTTM?: number;
-    totalDebtToEquityQuarterly?: number;
+    netProfitMarginTTM?: number;
+    "10DayAverageTradingVolume"?: number;
     [key: string]: number | string | undefined;
   };
   metricType: string;
@@ -131,6 +69,26 @@ export interface FinnhubRecommendation {
   symbol: string;
 }
 
+/** Normalised stock row used throughout the app */
+export interface Stock {
+  symbol: string;
+  name: string;
+  industry: string;
+  price: number;
+  previousClose: number;
+  change: number;
+  percentChange: number;
+  highToday: number;
+  lowToday: number;
+  openPrice: number;
+  marketCap: number;            // in millions USD
+  fiftyTwoWeekHigh: number | null;
+  fiftyTwoWeekLow: number | null;
+  priceVs52wHigh: number | null; // ((price - 52wHigh) / 52wHigh) * 100
+  peRatio: number | null;
+}
+
+/** Extended stock data for the detail page */
 export interface StockDetail extends Stock {
   exchange: string;
   currency: string;
@@ -139,4 +97,36 @@ export interface StockDetail extends Stock {
   weburl: string;
   country: string;
   shareOutstanding: number;
+}
+
+// ---------------------------------------------------------------------------
+// Market status
+// ---------------------------------------------------------------------------
+
+export type MarketSession = "pre-market" | "regular" | "post-market" | null;
+
+export interface MarketStatus {
+  exchange: string;
+  holiday: string | null;
+  isOpen: boolean;
+  session: MarketSession;
+  timezone: string;
+  t: number;
+}
+
+export interface MarketHoliday {
+  eventName: string;
+  atDate: string;
+  tradingHour: string;
+}
+
+export interface MarketHolidayResponse {
+  data: MarketHoliday[];
+  exchange: string;
+  timezone: string;
+}
+
+export interface MarketInfo {
+  status: MarketStatus;
+  holidays: MarketHoliday[];
 }

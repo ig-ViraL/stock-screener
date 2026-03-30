@@ -1,271 +1,112 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
-import type { ConnectionStatus, WebSocketTrade } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
 
-const WS_URL = "wss://ws.finnhub.io";
-const RECONNECT_BASE_DELAY = 1_000;
-const RECONNECT_MAX_DELAY = 30_000;
-const MAX_RECONNECT_ATTEMPTS = 10;
-const THROTTLE_MS = 250;
+export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
-interface UseFinnhubWebSocketOptions {
-  symbols: string[];
-  onPriceUpdate: (updates: Map<string, number>) => void;
-  enabled?: boolean;
-}
+const FLUSH_MS = 500;          // flush buffered ticks to state every 500ms
+const BASE_DELAY_MS = 2_000;   // initial reconnect delay
+const MAX_DELAY_MS = 30_000;   // cap reconnect backoff at 30s
 
-export function useFinnhubWebSocket({
-  symbols,
-  onPriceUpdate,
-  enabled = true,
-}: UseFinnhubWebSocketOptions) {
-  const simulateWs =
-    process.env.NEXT_PUBLIC_FINNHUB_WS_SIMULATE === "true" ||
-    process.env.NEXT_PUBLIC_FINNHUB_WS_SIMULATE === "1";
+/**
+ * Connects to the Finnhub WebSocket feed and returns a live price map.
+ *
+ * Price ticks are buffered in a ref and flushed to state every 500ms —
+ * this means one re-render per 500ms regardless of how many ticks arrive,
+ * preventing UI jank under rapid market data flow.
+ *
+ * Reconnects automatically on drop with exponential backoff (2s → 4s → 8s … 30s).
+ * Cleans up (unsubscribes + closes) on unmount.
+ *
+ * Requires NEXT_PUBLIC_FINNHUB_API_KEY in the environment.
+ */
+export function useFinnhubWebSocket(symbols: readonly string[]) {
+  const [priceMap, setPriceMap] = useState<Map<string, number>>(new Map());
+  const [status, setStatus] = useState<ConnectionStatus>("connecting");
 
-  const [status, setStatus] = useState<ConnectionStatus>("disconnected");
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectAttempts = useRef(0);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined
-  );
-  const pendingUpdates = useRef<Map<string, number>>(new Map());
-  const flushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined
-  );
-  const isMountedRef = useRef(false);
-  const shouldReconnectRef = useRef(true);
-  const subscribedSymbolsRef = useRef<Set<string>>(new Set());
-  const connectRef = useRef<(() => void) | null>(null);
-
-
-  const symbolsRef = useRef(symbols);
-  const onPriceUpdateRef = useRef(onPriceUpdate);
- 
-  useEffect(() => {
-    symbolsRef.current = symbols;
-  }, [symbols]);
+  // Buffer for incoming ticks — written on every message, read on interval
+  const pendingRef = useRef(new Map<string, number>());
 
   useEffect(() => {
-    onPriceUpdateRef.current = onPriceUpdate;
-  }, [onPriceUpdate]);
-
-  const flushUpdates = useCallback(() => {
-    if (pendingUpdates.current.size > 0) {
-      const batch = new Map(pendingUpdates.current);
-      pendingUpdates.current.clear();
-      onPriceUpdateRef.current(batch);
-    }
-  }, []);
-
-  const connect = useCallback(() => {
-    if (!enabled || !isMountedRef.current || !shouldReconnectRef.current) return;
-    if (wsRef.current) return;
-
     const apiKey = process.env.NEXT_PUBLIC_FINNHUB_API_KEY;
     if (!apiKey) {
-      console.warn(
-        "[useFinnhubWebSocket] NEXT_PUBLIC_FINNHUB_API_KEY is not set. " +
-          "Restart the dev server after adding it to .env."
-      );
+      console.error("[WebSocket] NEXT_PUBLIC_FINNHUB_API_KEY is not set");
       setStatus("disconnected");
       return;
     }
-    setStatus("connecting");
 
-    const ws = new WebSocket(`${WS_URL}?token=${apiKey}`);
-    wsRef.current = ws;
+    let mounted = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
 
-    ws.onopen = () => {
-      if (wsRef.current !== ws) return;
-      setStatus("connected");
-      reconnectAttempts.current = 0;
+    function connect() {
+      if (!mounted) return;
+      setStatus((prev) => (prev === "connected" ? "reconnecting" : "connecting"));
 
-      subscribedSymbolsRef.current.clear();
-      for (const symbol of symbolsRef.current) {
-        ws.send(JSON.stringify({ type: "subscribe", symbol }));
-        subscribedSymbolsRef.current.add(symbol);
-      }
-    };
+      ws = new WebSocket(`wss://ws.finnhub.io?token=${apiKey}`);
 
-    ws.onmessage = (event) => {
-      if (wsRef.current !== ws) return;
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "trade" && Array.isArray(data.data)) {
-          for (const trade of data.data as WebSocketTrade[]) {
-            pendingUpdates.current.set(trade.s, trade.p);
-          }
-
-          if (!flushTimer.current) {
-            flushTimer.current = setTimeout(() => {
-              flushTimer.current = undefined;
-              flushUpdates();
-            }, THROTTLE_MS);
-          }
-        }
-      } catch {
-        // ignore malformed frames
-      }
-    };
-
-    ws.onclose = () => {
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-        subscribedSymbolsRef.current.clear();
-      }
-      if (flushTimer.current) {
-        clearTimeout(flushTimer.current);
-        flushTimer.current = undefined;
-      }
-      flushUpdates();
-
-      const canReconnect =
-        wsRef.current === null &&
-        enabled &&
-        isMountedRef.current &&
-        shouldReconnectRef.current &&
-        reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS;
-
-      if (canReconnect) {
-        setStatus("reconnecting");
-        const delay = Math.min(
-          RECONNECT_BASE_DELAY * 2 ** reconnectAttempts.current,
-          RECONNECT_MAX_DELAY
-        );
-        reconnectAttempts.current++;
-        reconnectTimer.current = setTimeout(
-          () => connectRef.current?.(),
-          delay
-        );
-      } else {
-        setStatus("disconnected");
-      }
-    };
-
-    ws.onerror = () => {
-      ws.close();
-    };
-  }, [enabled, flushUpdates]);
-
-  useEffect(() => {
-    connectRef.current = connect;
-  }, [connect]);
-
-  useEffect(() => {
-    if (!enabled || simulateWs) return;
-
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-    const subscribed = subscribedSymbolsRef.current;
-    for (const symbol of symbols) {
-      if (subscribed.has(symbol)) continue;
-      ws.send(JSON.stringify({ type: "subscribe", symbol }));
-      subscribed.add(symbol);
-    }
-  }, [symbols, enabled, simulateWs]);
-
-  useEffect(() => {
-    if (!enabled || !simulateWs) return;
-
-    // Simulation mode: mimic a live feed so the dashboard updates visually.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStatus("connected");
-
-    const lastPrices = new Map<string, number>();
-    const symbolsSnapshot = symbolsRef.current;
-
-    const hashToBase = (s: string) => {
-      let h = 0;
-      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-      const positive = Math.abs(h);
-      // Stable base per symbol, so it "looks" consistent across reloads.
-      return 20 + (positive % 480);
-    };
-
-    for (const symbol of symbolsSnapshot) {
-      lastPrices.set(symbol, hashToBase(symbol));
-    }
-
-    const simTickMs = 800;
-    const interval = setInterval(() => {
-      const batch = new Map<string, number>();
-      for (const symbol of symbolsRef.current) {
-        const prev = lastPrices.get(symbol) ?? hashToBase(symbol);
-        // Random walk: small % step each tick.
-        const step = (Math.random() - 0.5) * 0.01; // +/- ~0.5%
-        const next = Math.max(0.01, prev * (1 + step));
-        lastPrices.set(symbol, next);
-        batch.set(symbol, Number(next.toFixed(2)));
-      }
-      onPriceUpdateRef.current(batch);
-    }, simTickMs);
-
-    return () => clearInterval(interval);
-  }, [enabled, simulateWs]);
-
-  const ensureConnected = useCallback(() => {
-    if (simulateWs) return;
-    if (
-      enabled &&
-      isMountedRef.current &&
-      shouldReconnectRef.current &&
-      !wsRef.current &&
-      !reconnectTimer.current
-    ) {
-      reconnectAttempts.current = 0;
-      connect();
-    }
-  }, [enabled, connect]);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    shouldReconnectRef.current = true;
-
-    if (enabled) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (!simulateWs) connect();
-      else {
+      ws.onopen = () => {
+        if (!mounted) { ws!.close(); return; }
+        attempt = 0;
         setStatus("connected");
-      }
-    } else {
-      setStatus("disconnected");
+        // Subscribe to every symbol
+        for (const sym of symbols) {
+          ws!.send(JSON.stringify({ type: "subscribe", symbol: sym }));
+        }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data as string);
+          // msg.type === "trade" carries an array of { s: symbol, p: price, t: ts, v: vol }
+          if (msg.type === "trade" && Array.isArray(msg.data)) {
+            for (const trade of msg.data) {
+              // Later trades overwrite earlier ones — we only care about latest price
+              pendingRef.current.set(trade.s as string, trade.p as number);
+            }
+          }
+        } catch {
+          // Ignore malformed frames
+        }
+      };
+
+      ws.onclose = () => {
+        if (!mounted) return;
+        setStatus("reconnecting");
+        const delay = Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+        attempt++;
+        reconnectTimer = setTimeout(connect, delay);
+      };
+
+      ws.onerror = () => {
+        ws?.close(); // triggers onclose → schedules reconnect
+      };
     }
 
-    return () => {
-      shouldReconnectRef.current = false;
-      isMountedRef.current = false;
+    connect();
 
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-      if (flushTimer.current) clearTimeout(flushTimer.current);
-      if (wsRef.current) {
-        const current = wsRef.current;
-        wsRef.current = null;
-        current.close();
+    // Flush buffered ticks → single setState per 500ms
+    const flushId = setInterval(() => {
+      if (!mounted || pendingRef.current.size === 0) return;
+      const snapshot = new Map(pendingRef.current);
+      pendingRef.current.clear();
+      setPriceMap((prev) => new Map([...prev, ...snapshot]));
+    }, FLUSH_MS);
+
+    return () => {
+      mounted = false;
+      clearInterval(flushId);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      // Unsubscribe before closing — keeps Finnhub subscription count clean
+      if (ws?.readyState === WebSocket.OPEN) {
+        for (const sym of symbols) {
+          ws.send(JSON.stringify({ type: "unsubscribe", symbol: sym }));
+        }
       }
+      ws?.close();
     };
-  }, [connect, enabled]);
+  }, []); // symbols is STOCK_SYMBOLS constant — safe to capture once at mount
 
-  useEffect(() => {
-    const handlePageShow = (e: PageTransitionEvent) => {
-      if (e.persisted) ensureConnected();
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") ensureConnected();
-    };
-
-    window.addEventListener("pageshow", handlePageShow);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      window.removeEventListener("pageshow", handlePageShow);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [ensureConnected]);
-
-  return { status };
+  return { priceMap, status };
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useRef } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation";
+import { useCallback, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   parseFiltersFromParams,
   serializeFilters,
@@ -13,62 +13,69 @@ import {
 
 const DEBOUNCE_MS = 300;
 
+function syncUrl(next: FilterParams) {
+  const params = serializeFilters(next);
+  const qs = params.toString();
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${qs ? `?${qs}` : ""}`
+  );
+}
+
 export function useStockFilters() {
   const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
   const debounceTimer = useRef<ReturnType<typeof setTimeout>>(null);
 
-  const filters = parseFiltersFromParams(searchParams);
+  // Initialized from URL params — changes are local state only.
+  // URL bar is kept in sync via window.history.replaceState (no navigation,
+  // no server re-render, no cache busting).
+  const [filters, setFilters] = useState<FilterParams>(() =>
+    parseFiltersFromParams(searchParams)
+  );
+
   const activeFilterCount = countActiveFilters(filters);
 
-  const pushFilters = useCallback(
-    (next: FilterParams) => {
-      const params = serializeFilters(next);
-      const qs = params.toString();
-      router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
-    },
-    [router, pathname]
-  );
+  const pushFilters = useCallback((next: FilterParams) => {
+    setFilters(next);
+    syncUrl(next);
+  }, []);
 
   const setNumericFilter = useCallback(
     (key: "pctMin" | "pctMax", value: number | undefined) => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => {
-        const current = parseFiltersFromParams(
-          new URLSearchParams(window.location.search)
-        );
-        pushFilters({ ...current, [key]: value });
+        setFilters((current) => {
+          const next = { ...current, [key]: value };
+          syncUrl(next);
+          return next;
+        });
       }, DEBOUNCE_MS);
     },
-    [pushFilters]
+    []
   );
 
-  const toggleCapTier = useCallback(
-    (tier: CapTier) => {
-      const current = parseFiltersFromParams(
-        new URLSearchParams(window.location.search)
-      );
+  const toggleCapTier = useCallback((tier: CapTier) => {
+    setFilters((current) => {
       const cap = current.cap.includes(tier)
         ? current.cap.filter((t) => t !== tier)
         : [...current.cap, tier];
-      pushFilters({ ...current, cap });
-    },
-    [pushFilters]
-  );
+      const next = { ...current, cap };
+      syncUrl(next);
+      return next;
+    });
+  }, []);
 
-  const toggleSector = useCallback(
-    (sector: string) => {
-      const current = parseFiltersFromParams(
-        new URLSearchParams(window.location.search)
-      );
-      const sectors = current.sector.includes(sector)
+  const toggleSector = useCallback((sector: string) => {
+    setFilters((current) => {
+      const sectorList = current.sector.includes(sector)
         ? current.sector.filter((s) => s !== sector)
         : [...current.sector, sector];
-      pushFilters({ ...current, sector: sectors });
-    },
-    [pushFilters]
-  );
+      const next = { ...current, sector: sectorList };
+      syncUrl(next);
+      return next;
+    });
+  }, []);
 
   const clearFilters = useCallback(() => {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);

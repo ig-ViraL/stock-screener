@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv app:*)",
+      "Bash(mv hooks:*)",
+      "Bash(mv lib:*)",
+      "Bash(mv components:*)",
+      "Bash(node -e \"const nc = require\\(''next/cache''\\); console.log\\(Object.keys\\(nc\\).filter\\(k => k.toLowerCase\\(\\).includes\\(''cache''\\)\\)\\)\")",
+      "Bash(npx tsc:*)",
+      "Bash(cd:*)",
+      "mcp__ide__getDiagnostics"
+    ]
+  }
+}
