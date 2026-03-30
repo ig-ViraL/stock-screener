@@ -1,4 +1,4 @@
-import { cacheLife } from "next/cache";
+import { cacheLife, cacheTag } from "next/cache";
 import type {
   FinnhubQuote,
   FinnhubProfile,
@@ -35,6 +35,7 @@ export async function fetchCachedProfile(
 ): Promise<FinnhubProfile> {
   "use cache";
   cacheLife("days");
+  cacheTag(`profile-${symbol.toUpperCase()}`, `stock-${symbol.toUpperCase()}`);
 
   const normalizedSymbol = symbol.toUpperCase();
   const res = await fetch(
@@ -55,6 +56,7 @@ export async function fetchCachedProfile(
 export async function fetchQuote(symbol: string): Promise<FinnhubQuote> {
   "use cache";
   cacheLife({ revalidate: 55, stale: 55, expire: 60 });
+  cacheTag(`quote-${symbol.toUpperCase()}`, `stock-${symbol.toUpperCase()}`);
 
   const res = await fetch(
     `${FINNHUB_BASE}/quote?symbol=${encodeURIComponent(symbol)}&token=${getApiKey()}`
@@ -158,6 +160,7 @@ export async function fetchMarketHolidays(
 ): Promise<MarketHoliday[]> {
   "use cache";
   cacheLife("days");
+  cacheTag("market-holidays", `market-holidays-${exchange}`);
 
   const res = await fetch(
     `${FINNHUB_BASE}/stock/market-holiday?exchange=${encodeURIComponent(exchange)}&token=${getApiKey()}`
@@ -179,6 +182,7 @@ export async function fetchBasicFinancials(
 ): Promise<FinnhubMetrics> {
   "use cache";
   cacheLife("hours");
+  cacheTag(`financials-${symbol.toUpperCase()}`, `stock-${symbol.toUpperCase()}`);
 
   const res = await fetch(
     `${FINNHUB_BASE}/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all&token=${getApiKey()}`
@@ -202,6 +206,7 @@ export async function fetchCompanyNews(
 ): Promise<FinnhubNewsItem[]> {
   "use cache";
   cacheLife("hours");
+  cacheTag(`news-${symbol.toUpperCase()}`, `stock-${symbol.toUpperCase()}`);
 
   const res = await fetch(
     `${FINNHUB_BASE}/company-news?symbol=${encodeURIComponent(symbol)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&token=${getApiKey()}`
@@ -223,6 +228,7 @@ export async function fetchRecommendationTrends(
 ): Promise<FinnhubRecommendation[]> {
   "use cache";
   cacheLife("hours");
+  cacheTag(`recommendations-${symbol.toUpperCase()}`, `stock-${symbol.toUpperCase()}`);
 
   const res = await fetch(
     `${FINNHUB_BASE}/stock/recommendation?symbol=${encodeURIComponent(symbol)}&token=${getApiKey()}`
