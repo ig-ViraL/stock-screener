@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { getCachedInsight, setCachedInsight } from "@/lib/insight-cache";
 
@@ -46,6 +47,103 @@ function buildUserPrompt(data: z.infer<typeof bodySchema>): string {
   return prompt;
 }
 
+async function streamWithAnthropic(
+  data: z.infer<typeof bodySchema>,
+  apiKey: string,
+): Promise<Response> {
+  const client = new Anthropic({ apiKey });
+  const symbol = data.symbol;
+
+  let accumulated = "";
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        const response = await client.messages.stream({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 200,
+          system: SYSTEM_PROMPT,
+          messages: [{ role: "user", content: buildUserPrompt(data) }],
+        });
+
+        for await (const chunk of response) {
+          if (
+            chunk.type === "content_block_delta" &&
+            chunk.delta.type === "text_delta"
+          ) {
+            accumulated += chunk.delta.text;
+            controller.enqueue(encoder.encode(chunk.delta.text));
+          }
+        }
+
+        if (accumulated) {
+          setCachedInsight(symbol, accumulated);
+        }
+        controller.close();
+      } catch {
+        controller.error(new Error("Stream interrupted"));
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "X-Insight-Cached": "false",
+    },
+  });
+}
+
+async function streamWithOpenAI(
+  data: z.infer<typeof bodySchema>,
+  apiKey: string,
+): Promise<Response> {
+  const openai = new OpenAI({ apiKey });
+  const symbol = data.symbol;
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0.7,
+    max_tokens: 200,
+    stream: true,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: buildUserPrompt(data) },
+    ],
+  });
+
+  let accumulated = "";
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const chunk of completion) {
+          const content = chunk.choices[0]?.delta?.content;
+          if (content) {
+            accumulated += content;
+            controller.enqueue(encoder.encode(content));
+          }
+        }
+        if (accumulated) {
+          setCachedInsight(symbol, accumulated);
+        }
+        controller.close();
+      } catch {
+        controller.error(new Error("Stream interrupted"));
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "X-Insight-Cached": "false",
+    },
+  });
+}
+
 export async function POST(request: Request) {
   let body: unknown;
   try {
@@ -85,59 +183,24 @@ export async function POST(request: Request) {
     });
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
+
+  if (!anthropicKey && !openaiKey) {
     return NextResponse.json(
-      { error: "AI service not configured" },
+      { error: "AI service not yet setup" },
       { status: 500 },
     );
   }
 
-  const openai = new OpenAI({ apiKey });
-
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.7,
-      max_tokens: 200,
-      stream: true,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserPrompt(parsed.data) },
-      ],
-    });
-
-    let accumulated = "";
-    const encoder = new TextEncoder();
-
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const chunk of completion) {
-            const content = chunk.choices[0]?.delta?.content;
-            if (content) {
-              accumulated += content;
-              controller.enqueue(encoder.encode(content));
-            }
-          }
-          if (accumulated) {
-            setCachedInsight(symbol, accumulated);
-          }
-          controller.close();
-        } catch {
-          controller.error(new Error("Stream interrupted"));
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "X-Insight-Cached": "false",
-      },
-    });
+    if (anthropicKey) {
+      return await streamWithAnthropic(parsed.data, anthropicKey);
+    } else {
+      return await streamWithOpenAI(parsed.data, openaiKey!);
+    }
   } catch (err) {
-    console.error("OpenAI API error:", err);
+    console.error("AI service error:", err);
     return NextResponse.json(
       { error: "AI service temporarily unavailable" },
       { status: 502 },
