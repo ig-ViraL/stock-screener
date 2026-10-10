@@ -1,17 +1,47 @@
-# Stock Screener
+<div align="center">
 
-A web-based **real-time stock screener** for analysts: live Finnhub-backed quotes via WebSocket, URL-driven filters, a shareable stock detail view, and streaming AI insights.
+# 📈 Stock Screener
 
-**Documentation set (keep these in sync as you develop):**
+**Real-time US equities dashboard: live WebSocket prices, shareable URL-driven filters and streaming AI insights.**
 
-| Doc | Role |
-|-----|------|
-| [README.md](./README.md) | How to run, env vars, feature checklist, limitations |
-| [DECISIONS_LOG.md](./DECISIONS_LOG.md) | **Running log** — append here whenever you make a choice (what / why / what we used) |
-| [DECISIONS.md](./DECISIONS.md) | Curated **architecture narrative** for reviewers and interviews (merge from the log periodically) |
-| [API.md](./API.md) | HTTP routes, params, shapes (expand as routes ship) |
+[**Live Demo**](https://stock-screener-beta-two.vercel.app/) · [Architecture](./DECISIONS.md) · [API](./API.md)
 
-Architecture and trade-offs are summarized in [DECISIONS.md](./DECISIONS.md). HTTP API surface is documented in [API.md](./API.md).
+![Next.js](https://img.shields.io/badge/Next.js_16-000?logo=nextdotjs) ![React](https://img.shields.io/badge/React_19-149ECA?logo=react&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white) ![Tailwind](https://img.shields.io/badge/Tailwind_4-06B6D4?logo=tailwindcss&logoColor=white) ![Vercel](https://img.shields.io/badge/Deployed_on-Vercel-000?logo=vercel)
+
+</div>
+
+## Why this project
+
+Free market-data APIs are rate-limited, and "live" dashboards tend to either hammer the API or go stale. This project is a worked answer to that trade-off: it streams 25+ tickers in real time while staying under Finnhub's free-tier cap, by choosing carefully what to cache, what to stream, and what to render on the server.
+
+## Highlights
+
+| | |
+|:--|:--|
+| ⚡ **Live prices** | 25+ stocks streamed over a Finnhub WebSocket, with reconnection handling and a connection status indicator. |
+| 🚀 **90%+ cache hit rate** | Next.js `use cache` and Partial Prerendering, with TTLs tuned per data type (quotes 30s, metrics hours, profiles days). |
+| 🔗 **URL-driven filters** | Filter state lives in the URL, so every view is shareable and survives a refresh. |
+| 🧱 **Progressive loading** | A server-rendered first slice with Suspense skeletons, then client batches (5 symbols per request, ~900ms apart) to avoid a thundering herd. |
+| 🛡️ **Rate-limit aware** | Concurrency capped on both client and server, plus request interception in Next.js 16 `proxy.ts` (30 req/min/IP). |
+| 🤖 **AI insights** | Streaming LLM summary per stock via `/api/insight`, with a response cache. Works with OpenAI or Anthropic. |
+| 📄 **Stock detail pages** | Key metrics, 52-week position, day-range bar, analyst recommendations, company profile and news. |
+
+## Architecture
+
+```
+Browser ──WebSocket──────────────▶ Finnhub (live trades)
+   │
+   │  HTTP (batched, 5 symbols / ~900ms)
+   ▼
+Next.js 16 (App Router)
+ ├─ proxy.ts            rate limiting + request interception
+ ├─ app/page.tsx        Server Component: first 5 rows via Suspense
+ ├─ /api/stocks         quote + profile + metrics, concurrency = 3
+ ├─ /api/insight        streamed LLM response (OpenAI / Anthropic)
+ └─ lib/finnhub.ts      in-memory quote cache (30s) + `use cache` for profile/metrics
+```
+
+The reasoning behind each decision (what is cached, what is deliberately not, and the trade-offs) is written up in [DECISIONS.md](./DECISIONS.md).
 
 ## Prerequisites
 
