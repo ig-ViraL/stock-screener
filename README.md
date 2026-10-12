@@ -6,7 +6,7 @@
 
 [**Live Demo**](https://stock-screener-beta-two.vercel.app/) · [Architecture](./DECISIONS.md) · [API](./API.md)
 
-![Next.js](https://img.shields.io/badge/Next.js_16-000?logo=nextdotjs) ![React](https://img.shields.io/badge/React_19-149ECA?logo=react&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white) ![Tailwind](https://img.shields.io/badge/Tailwind_4-06B6D4?logo=tailwindcss&logoColor=white) ![Vercel](https://img.shields.io/badge/Deployed_on-Vercel-000?logo=vercel)
+![Next.js](https://img.shields.io/badge/Next.js_16-000?logo=nextdotjs) ![React](https://img.shields.io/badge/React_19-149ECA?logo=react&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white) ![Tailwind](https://img.shields.io/badge/Tailwind_4-06B6D4?logo=tailwindcss&logoColor=white) ![Vercel](https://img.shields.io/badge/Deployed_on-Vercel-000?logo=vercel) ![CI](https://github.com/ig-ViraL/stock-screener/actions/workflows/ci.yml/badge.svg)
 
 </div>
 
@@ -105,4 +105,4 @@ npm run dev
 
 ## License
 
-Private / assignment use unless you add a public license.
+MIT, see [LICENSE](./LICENSE).

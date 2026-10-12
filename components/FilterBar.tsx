@@ -42,7 +42,9 @@ function DebouncedNumberInput({
 }) {
   const [local, setLocal] = useState(value?.toString() ?? "");
 
+  // Keep the text box in sync when the URL-driven value changes from outside (e.g. "clear filters").
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocal(value?.toString() ?? "");
   }, [value]);
 
